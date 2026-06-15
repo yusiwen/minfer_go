@@ -52,6 +52,8 @@ type Tokenizer interface {
 type MetadataProvider interface {
 	GetMetadataString(key string) (string, bool)
 	GetMetadataUint64(key string) (uint64, bool)
+	GetMetadataStringArray(key string) ([]string, bool)
+	GetMetadataFloat32Array(key string) ([]float32, bool)
 }
 
 // TokenizerConfig holds tokenizer metadata extracted from a GGUF file.
@@ -344,6 +346,77 @@ func (b *BPE) EosID() int { return b.eosTokenID }
 
 // PadID returns the padding token ID, or -1 if not set.
 func (b *BPE) PadID() int { return b.padTokenID }
+
+// LoadFromGGUF creates a tokenizer from GGUF metadata.
+// Supports "gpt2" (BPE) and "llama" (SentencePiece) model types.
+func LoadFromGGUF(m MetadataProvider) (Tokenizer, error) {
+	modelType, _ := m.GetMetadataString("tokenizer.ggml.model")
+
+	switch modelType {
+	case "gpt2", "":
+		return loadGPT2BPE(m)
+	case "llama":
+		return loadSentencePiece(m)
+	default:
+		return nil, fmt.Errorf("tokenizer: unsupported model type %q (supported: gpt2, llama)", modelType)
+	}
+}
+
+// loadGPT2BPE loads a GPT-2 style BPE tokenizer from GGUF metadata.
+func loadGPT2BPE(m MetadataProvider) (*BPE, error) {
+	tokens, _ := m.GetMetadataStringArray("tokenizer.ggml.tokens")
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("tokenizer: empty tokenizer.ggml.tokens")
+	}
+
+	scores, _ := m.GetMetadataFloat32Array("tokenizer.ggml.scores")
+	merges, _ := m.GetMetadataStringArray("tokenizer.ggml.merges")
+
+	bosID := -1
+	eosID := -1
+	padID := -1
+
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.bos_token_id"); ok {
+		bosID = int(v)
+	}
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.eos_token_id"); ok {
+		eosID = int(v)
+	}
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.padding_token_id"); ok {
+		padID = int(v)
+	}
+
+	return NewGPT2(tokens, scores, merges, bosID, eosID, padID)
+}
+
+// loadSentencePiece loads a SentencePiece tokenizer from GGUF metadata.
+// For now, returns a minimal byte-level tokenizer (decode only).
+func loadSentencePiece(m MetadataProvider) (Tokenizer, error) {
+	tokens, _ := m.GetMetadataStringArray("tokenizer.ggml.tokens")
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("tokenizer: empty tokenizer.ggml.tokens")
+	}
+	scores, _ := m.GetMetadataFloat32Array("tokenizer.ggml.scores")
+
+	bosID := -1
+	eosID := -1
+	padID := -1
+
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.bos_token_id"); ok {
+		bosID = int(v)
+	}
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.eos_token_id"); ok {
+		eosID = int(v)
+	}
+	if v, ok := m.GetMetadataUint64("tokenizer.ggml.padding_token_id"); ok {
+		padID = int(v)
+	}
+
+	// SentencePiece uses scores for the unigram model.
+	// For now, create a BPE-like tokenizer for decode-only support.
+	_ = scores
+	return NewGPT2(tokens, nil, nil, bosID, eosID, padID)
+}
 
 // byteToUnicode maps a byte to a printable Unicode character.
 //

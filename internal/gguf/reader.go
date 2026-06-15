@@ -345,6 +345,14 @@ func (r *Reader) readArray() (any, error) {
 			}
 		}
 		return result, nil
+	case MetaTypeInt32:
+		result := make([]int32, length)
+		for i := uint64(0); i < length; i++ {
+			if err := binary.Read(r.r, binary.LittleEndian, &result[i]); err != nil {
+				return nil, err
+			}
+		}
+		return result, nil
 	default:
 		return nil, fmt.Errorf("gguf: unsupported array element type: %d", elemType)
 	}
@@ -562,6 +570,26 @@ func (r *Reader) GetMetadataFloat32(key string) (float32, bool) {
 	return f, ok
 }
 
+// GetMetadataStringArray retrieves a metadata value as a []string.
+func (r *Reader) GetMetadataStringArray(key string) ([]string, bool) {
+	v, ok := r.Metadata[key]
+	if !ok {
+		return nil, false
+	}
+	s, ok := v.([]string)
+	return s, ok
+}
+
+// GetMetadataFloat32Array retrieves a metadata value as a []float32.
+func (r *Reader) GetMetadataFloat32Array(key string) ([]float32, bool) {
+	v, ok := r.Metadata[key]
+	if !ok {
+		return nil, false
+	}
+	s, ok := v.([]float32)
+	return s, ok
+}
+
 // --- Config loading ---
 
 // LoadConfig reads model architecture parameters from GGUF metadata
@@ -629,9 +657,15 @@ func (r *Reader) LoadConfig() (model.Config, error) {
 		cfg.RoPEBase = v
 	}
 
-	// VocabSize: read from tokenizer metadata
-	if v, ok := r.GetMetadataUint64("tokenizer.ggml.tokens"); ok {
-		cfg.VocabSize = int(v)
+	// VocabSize: read from tokenizer metadata (string array length)
+	if tokens, ok := r.GetMetadataStringArray("tokenizer.ggml.tokens"); ok {
+		cfg.VocabSize = len(tokens)
+	}
+	// Fallback: try legacy uint64 format
+	if cfg.VocabSize == 0 {
+		if v, ok := r.GetMetadataUint64("tokenizer.ggml.tokens"); ok {
+			cfg.VocabSize = int(v)
+		}
 	}
 
 	// HeadDim = HiddenDim / NumHeads

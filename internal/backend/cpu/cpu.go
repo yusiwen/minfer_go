@@ -285,12 +285,6 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 			q.Shape[2], k.Shape[2], dim,
 		))
 	}
-	if q.Shape[1] != k.Shape[1] {
-		panic(fmt.Sprintf(
-			"cpu.RoPE: num_heads mismatch: q has %d, k has %d",
-			q.Shape[1], k.Shape[1],
-		))
-	}
 	if dim%2 != 0 {
 		panic(fmt.Sprintf(
 			"cpu.RoPE: head_dim must be even, got %d",
@@ -301,29 +295,31 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 	// TODO: read base from model.Config instead of hardcoding
 	const base = 10000.0
 
-	numHeads := q.Shape[1]
+	qHeads := q.Shape[1]
+	kHeads := k.Shape[1]
 	headDim := dim
 
-	for h := 0; h < numHeads; h++ {
+	// Apply RoPE to Q (all qHeads heads)
+	for h := 0; h < qHeads; h++ {
 		for i := 0; i < headDim; i += 2 {
-			// Offset for this dimension pair within this head
 			offset := h*headDim + i
-
-			// Compute θ_i
-			// Formula: θ_i = base^(-2i/d) = 1 / base^(2i/d)
 			freq := 1.0 / math.Pow(base, float64(i)/float64(headDim))
-
-			// Compute cos and sin for this position
 			cosVal := float32(math.Cos(float64(pos) * freq))
 			sinVal := float32(math.Sin(float64(pos) * freq))
-
-			// Apply rotation to Q
 			q0 := q.Data[offset]
 			q1 := q.Data[offset+1]
 			q.Data[offset] = q0*cosVal - q1*sinVal
 			q.Data[offset+1] = q1*cosVal + q0*sinVal
+		}
+	}
 
-			// Apply same rotation to K
+	// Apply RoPE to K (kHeads heads)
+	for h := 0; h < kHeads; h++ {
+		for i := 0; i < headDim; i += 2 {
+			offset := h*headDim + i
+			freq := 1.0 / math.Pow(base, float64(i)/float64(headDim))
+			cosVal := float32(math.Cos(float64(pos) * freq))
+			sinVal := float32(math.Sin(float64(pos) * freq))
 			k0 := k.Data[offset]
 			k1 := k.Data[offset+1]
 			k.Data[offset] = k0*cosVal - k1*sinVal

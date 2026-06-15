@@ -463,14 +463,43 @@ func TestRoPEPanicDimMismatch(t *testing.T) {
 	})
 }
 
-// TestRoPEPanicHeadsMismatch verifies RoPE panics when q and k have different num_heads.
-func TestRoPEPanicHeadsMismatch(t *testing.T) {
+// TestRoPEGQA verifies RoPE works with different Q/K head counts (GQA).
+func TestRoPEGQA(t *testing.T) {
 	backend := New()
-	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
-	k := tensor.NewWithData([]float32{3, 3, 3, 3}, 1, 1, 4)
-	expectPanic(t, "cpu.RoPE: num_heads mismatch", func() {
-		backend.RoPE(q, k, 0, 4)
-	})
+	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4) // 2 Q heads
+	k := tensor.NewWithData([]float32{3, 3, 3, 3}, 1, 1, 4)             // 1 K head (GQA)
+
+	qOrig := q.Clone()
+	kOrig := k.Clone()
+
+	// Should NOT panic — GQA is valid
+	if err := backend.RoPE(q, k, 5, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	// Q should have changed (pos=5)
+	qChanged := false
+	for i := range q.Data {
+		if q.Data[i] != qOrig.Data[i] {
+			qChanged = true
+			break
+		}
+	}
+	if !qChanged {
+		t.Error("RoPE should change Q values at pos=5")
+	}
+
+	// K should also have changed (same position)
+	kChanged := false
+	for i := range k.Data {
+		if k.Data[i] != kOrig.Data[i] {
+			kChanged = true
+			break
+		}
+	}
+	if !kChanged {
+		t.Error("RoPE should change K values at pos=5")
+	}
 }
 
 // TestRoPEPanicOddDim verifies RoPE panics on odd head_dim.
