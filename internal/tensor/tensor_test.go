@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// TestNew 验证张量创建和维度信息。
+// TestNew verifies tensor creation and dimension metadata.
 //
-// 测试目标：
-//   1. New(2, 3) 创建形状 [2, 3] 的张量
-//   2. NumElements() 返回 6（2×3）
-//   3. Dims() 返回 2
-//   4. Size(i) 返回正确维度大小
+// Test targets:
+//   1. New(2, 3) creates a tensor with shape [2, 3]
+//   2. NumElements() returns 6 (2×3)
+//   3. Dims() returns 2
+//   4. Size(i) returns correct dimension sizes
 func TestNew(t *testing.T) {
 	t1 := New(2, 3)
 	if len(t1.Shape) != 2 || t1.Shape[0] != 2 || t1.Shape[1] != 3 {
@@ -28,7 +28,7 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// TestNewWithData 验证从数据切片创建张量。
+// TestNewWithData verifies creating a tensor from an existing data slice.
 func TestNewWithData(t *testing.T) {
 	data := []float32{1, 2, 3, 4, 5, 6}
 	t1 := NewWithData(data, 2, 3)
@@ -37,9 +37,9 @@ func TestNewWithData(t *testing.T) {
 	}
 }
 
-// TestAt 验证索引访问。
+// TestAt verifies index access.
 //
-// 行优先存储下，形状 [2,3] 的张量：
+// For a [2,3] tensor stored row-major:
 //   (0,0)→0, (0,1)→1, (0,2)→2, (1,0)→3, (1,1)→4, (1,2)→5
 func TestAt(t *testing.T) {
 	t1 := NewWithData([]float32{0, 1, 2, 3, 4, 5}, 2, 3)
@@ -58,7 +58,7 @@ func TestAt(t *testing.T) {
 	}
 }
 
-// TestSet 验证写入元素。
+// TestSet verifies element writes.
 func TestSet(t *testing.T) {
 	t1 := New(2, 3)
 	t1.Set(42, 1, 1)
@@ -67,38 +67,38 @@ func TestSet(t *testing.T) {
 	}
 }
 
-// TestView 验证 View 操作（零成本 reshape）。
+// TestView verifies the View operation (zero-cost reshape).
 //
-// 形状 [2,3] → [3,2]，总元素数不变，共享底层数据。
+// Shape [2,3] → [3,2]: total elements unchanged, data shared.
 func TestView(t *testing.T) {
 	t1 := NewWithData([]float32{1, 2, 3, 4, 5, 6}, 2, 3)
 	t2 := t1.View(3, 2)
 
-	// 形状改变
+	// Shape changed
 	if t2.Shape[0] != 3 || t2.Shape[1] != 2 {
 		t.Fatalf("View shape: got %v, want [3,2]", t2.Shape)
 	}
 
-	// 共享底层数据（修改 t2 影响 t1）
+	// Underlying data is shared (modifying t2 affects t1)
 	t2.Data[0] = 99
 	if t1.Data[0] != 99 {
 		t.Fatalf("View should share underlying data")
 	}
 }
 
-// TestClone 验证 Clone 是深度拷贝（不共享数据）。
+// TestClone verifies Clone is a deep copy (data not shared).
 func TestClone(t *testing.T) {
 	t1 := NewWithData([]float32{1, 2, 3, 4, 5, 6}, 2, 3)
 	t2 := t1.Clone()
 
-	// 修改克隆不影响原张量
+	// Modifying clone does not affect original
 	t2.Data[0] = 99
 	if t1.Data[0] != 1 {
 		t.Fatalf("Clone should not share data: t1.Data[0] = %f, want 1", t1.Data[0])
 	}
 }
 
-// Test1D 验证 1 维张量也能工作。
+// Test1D verifies 1-D tensors work.
 func Test1D(t *testing.T) {
 	t1 := New(4)
 	if t1.Dims() != 1 || t1.Shape[0] != 4 || t1.NumElements() != 4 {
@@ -106,10 +106,9 @@ func Test1D(t *testing.T) {
 	}
 }
 
-// Test3D 验证 3 维张量的多维索引访问。
+// Test3D verifies multi-dimensional index access for 3-D tensors.
 //
-// 形状 [2, 2, 3] → 2 个矩阵，每个 2×3。
-// 行优先存储：
+// Shape [2, 2, 3] → 2 matrices, each 2×3. Row-major storage:
 //   (0,0,0)=0, (0,0,1)=1, (0,0,2)=2, (0,1,0)=3, (0,1,1)=4, (0,1,2)=5
 //   (1,0,0)=6, (1,0,1)=7, (1,0,2)=8, (1,1,0)=9, (1,1,1)=10, (1,1,2)=11
 func Test3D(t *testing.T) {
@@ -136,7 +135,7 @@ func Test3D(t *testing.T) {
 	}
 }
 
-// TestAtPanicIndexCount 验证 At 在索引数量不匹配时 panic。
+// TestAtPanicIndexCount verifies At panics on index count mismatch.
 func TestAtPanicIndexCount(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -151,7 +150,7 @@ func TestAtPanicIndexCount(t *testing.T) {
 	t1.At(0) // 2D tensor needs 2 indices, only 1 given → panic
 }
 
-// TestAtPanicIndexOutOfRange 验证 At 在索引越界时 panic。
+// TestAtPanicIndexOutOfRange verifies At panics on out-of-range index.
 func TestAtPanicIndexOutOfRange(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -166,7 +165,7 @@ func TestAtPanicIndexOutOfRange(t *testing.T) {
 	t1.At(5, 0) // row 5 is out of range for shape [2,3] → panic
 }
 
-// TestSetPanicIndexCount 验证 Set 在索引数量不匹配时 panic。
+// TestSetPanicIndexCount verifies Set panics on index count mismatch.
 func TestSetPanicIndexCount(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -181,7 +180,7 @@ func TestSetPanicIndexCount(t *testing.T) {
 	t1.Set(42, 0, 0, 0) // 2D tensor needs 2 indices, 3 given → panic
 }
 
-// TestViewPanic 验证 View 在形状不匹配时 panic 且有明确信息。
+// TestViewPanic verifies View panics on shape mismatch with informative message.
 func TestViewPanic(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -197,7 +196,7 @@ func TestViewPanic(t *testing.T) {
 	t1.View(4, 2) // 4×2=8 ≠ 6 → panic
 }
 
-// TestNewWithDataPanic 验证 NewWithData 在 data 长度不匹配时 panic。
+// TestNewWithDataPanic verifies NewWithData panics on data length mismatch.
 func TestNewWithDataPanic(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -212,7 +211,7 @@ func TestNewWithDataPanic(t *testing.T) {
 	NewWithData([]float32{1, 2, 3}, 2, 3) // 3 elements ≠ 2×3=6 → panic
 }
 
-// TestSizeOutOfRange 验证 Size 对越界索引返回 1。
+// TestSizeOutOfRange verifies Size returns 1 for out-of-range indices.
 func TestSizeOutOfRange(t *testing.T) {
 	t1 := New(2, 3)
 	if t1.Size(-1) != 1 {
@@ -223,16 +222,16 @@ func TestSizeOutOfRange(t *testing.T) {
 	}
 }
 
-// TestScalar 验证 0 维标量张量的创建和访问。
+// TestScalar verifies 0-D (scalar) tensor creation and access.
 func TestScalar(t *testing.T) {
-	t1 := New() // 无参数→标量
+	t1 := New() // no args → scalar
 	if t1.Dims() != 0 {
 		t.Errorf("scalar tensor should have 0 dims, got %d", t1.Dims())
 	}
 	if t1.NumElements() != 1 {
 		t.Errorf("scalar tensor should have 1 element, got %d", t1.NumElements())
 	}
-	// 标量的 At（无索引）应该返回唯一元素
+	// At() with no indices should return the single element
 	t1.Data[0] = 42
 	if t1.At() != 42 {
 		t.Errorf("At() on scalar = %f, want 42", t1.At())

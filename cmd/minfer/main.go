@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version 信息，通过 ldflags 在构建时注入
-// 在 Makefile 中：go build -ldflags '-X "main.Version=$(VERSION)" ...'
+// Version info — injected via ldflags at build time.
+// In the Makefile: go build -ldflags '-X "main.Version=$(VERSION)" ...'
 var (
 	Version    = "dev"
 	CommitSHA  = "unknown"
@@ -19,13 +19,13 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "minfer",
 		Short: "Minfer — Go LLM inference engine from scratch",
-		Long: `Minfer is a from-scratch LLM local inference engine written in Go.
+		Long: `Minfer is a from-scratch LLM (大语言模型) local inference engine written in Go.
 It is designed as a learning project to deeply understand every layer of
 LLM inference — tensor operations, GGUF format, tokenization, transformer
 architecture, KV cache, and sampling.`,
 	}
 
-	// version 子命令
+	// version subcommand
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -36,7 +36,7 @@ architecture, KV cache, and sampling.`,
 		},
 	})
 
-	// run 子命令
+	// run subcommand
 	runCmd := &cobra.Command{
 		Use:   "run [model.gguf]",
 		Short: "Run inference with a GGUF model",
@@ -62,7 +62,7 @@ architecture, KV cache, and sampling.`,
 	runCmd.Flags().StringP("model", "m", "", "Path to GGUF model file")
 	rootCmd.AddCommand(runCmd)
 
-	// pull 子命令（占位，后续实现）
+	// pull subcommand (placeholder, implemented in Phase 6)
 	pullCmd := &cobra.Command{
 		Use:   "pull <model-ref>",
 		Short: "Download a model from Hugging Face or Ollama registry",
@@ -74,7 +74,7 @@ architecture, KV cache, and sampling.`,
 	}
 	rootCmd.AddCommand(pullCmd)
 
-	// list 子命令（占位）
+	// list subcommand (placeholder)
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List downloaded models",

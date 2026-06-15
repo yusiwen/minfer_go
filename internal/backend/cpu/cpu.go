@@ -1,22 +1,24 @@
-// Package cpu 实现了纯 Go 的 CPUBackend。
+// Package cpu implements the pure-Go CPUBackend.
 //
-// 这是 Minfer 的第一个（也是最基本的）计算后端。
-// 所有运算都用最朴素的 for 循环实现——没有任何 SIMD 优化、
-// 没有 BLAS 调用、没有 GPU。这样做的目的是：
+// This is Minfer's first (and most basic) compute backend.
+// All operations use plain for-loops — no SIMD (单指令多数据流), no BLAS,
+// no GPU (图形处理器). The purpose:
 //
-//   1. 每一行数学都看得懂——三重循环的矩阵乘法、逐元素 Softmax
-//   2. 作为后续优化的基线——优化前和优化后结果对比
-//   3. 学习价值——理解了朴素实现，才能理解为什么需要优化
+//   1. Every line of math is fully visible and understandable
+//      — the triple-loop matrix multiply, element-wise softmax, etc.
+//   2. Serves as a correctness baseline for future optimizations
+//   3. Learning value: understand the naive implementation first,
+//      then understand why optimization matters
 //
-// 性能预期（纯 Go，单核，float32）：
-//   - 0.5B 模型 (Qwen2.5): 30-50 tok/s
-//   - 3B 模型: 8-12 tok/s
-//   - 7B 模型: 3-5 tok/s
+// Performance expectations (pure Go, single-core, float32):
+//   - 0.5B model (Qwen2.5): 30-50 tok/s
+//   - 3B model: 8-12 tok/s
+//   - 7B model: 3-5 tok/s
 //
-// 后续优化方向：
-//   Phase 2: goroutine 并行 attention heads
+// Optimization roadmap:
+//   Phase 2: goroutine-parallel attention heads
 //   Phase 3: cache-aware tiled matmul
-//   Phase 4: cgo + OpenBLAS 做 MatMul
+//   Phase 4: cgo + OpenBLAS for MatMul
 //   Phase 5: CUDA backend
 package cpu
 
@@ -28,51 +30,50 @@ import (
 	"github.com/yusiwen/minfer/internal/tensor"
 )
 
-// 编译期检查：CPUBackend 是否实现了 compute.Backend 接口
+// Compile-time check: verify CPUBackend implements compute.Backend
 var _ compute.Backend = (*CPUBackend)(nil)
 
-// CPUBackend 实现了 compute.Backend 接口。
-// 所有方法都用纯 Go 实现。
+// CPUBackend implements the compute.Backend interface using pure Go.
+// All methods use plain for-loops.
 type CPUBackend struct{}
 
-// New 创建一个新的 CPUBackend 实例。
+// New creates a new CPUBackend instance.
 func New() *CPUBackend {
 	return &CPUBackend{}
 }
 
-// MatMul 计算 C = A × B，使用最经典的 ijk 三重循环。
+// MatMul computes C = A × B using the classic ijk triple loop.
 //
-// 算法原理
+// Algorithm
 // ─────────
 //
-// 矩阵乘法是 LLM 推理中最核心的运算。一个 7B 模型的推理过程中，
-// ~70% 的浮点运算发生在 MatMul 里。
+// Matrix multiplication is the single most important operation in LLM (大语言模型) inference.
+// A 7B model spends ~70% of its FLOPs in MatMul calls.
 //
-// 数学定义：
+// Mathematical definition:
 //   C[i][j] = Σ A[i][k] × B[k][j]   (k = 0..K-1)
 //
-// 用三重循环实现：
-//   for i = 0..M-1:         // 遍历 A 的每一行
-//     for j = 0..N-1:       // 遍历 B 的每一列
-//       for k = 0..K-1:     // 累乘求和
+// Triple-loop implementation (ijk order):
+//   for i = 0..M-1:        // iterate over each row of A
+//     for j = 0..N-1:      // iterate over each column of B
+//       for k = 0..K-1:    // accumulate products
 //         C[i][j] += A[i][k] × B[k][j]
 //
-// 内存访问模式
-// ────────────
-// 这个朴素实现的缓存效率不高。原因是 B[k][j] 的访问是列优先的，
-// 而 Go（和 C）使用行优先存储，导致每次循环都在不同的 cache line
-// 上跳来跳去。
+// Memory access pattern
+// ────────────────────
+// The naive ijk order is cache-inefficient. B[k][j] accesses are column-major,
+// but Go (and C) use row-major storage, causing cache misses on every B access.
 //
-// 更好的做法（后续优化）：
-//   ikj 顺序: for i → for k → for j
-//   这样 A[i][k] 和 B[k][j] 都是顺序访问（一个按行，一个按行片段）
-//   缓存友好度大幅提升。
+// Better order (future optimization):
+//   ikj: for i → for k → for j
+//   A[i][k] and B[k][j] are both sequential (one row-fragment each).
+//   Cache efficiency improves dramatically.
 //
-// 为什么先写 ijk：
-//   最直观，最容易和数学公式对应。
-//   先跑通、验证正确，再优化。
+// Why start with ijk:
+//   Most intuitive — directly mirrors the mathematical formula.
+//   Get it working and correct FIRST, optimize SECOND.
 func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
-	// 形状检查
+	// Shape validation
 	if a.Dims() != 2 || bTensor.Dims() != 2 {
 		panic("cpu.MatMul: inputs must be 2D tensors")
 	}
@@ -86,17 +87,17 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	}
 	N := bTensor.Shape[1]
 
-	// 创建输出张量 C: [M, N]（初始值为 0）
+	// Allocate output tensor C: [M, N] (zero-initialized)
 	c := tensor.New(M, N)
 
-	// 三重循环：最朴素的 ijk
+	// Triple loop: naive ijk
 	for i := 0; i < M; i++ {
 		for j := 0; j < N; j++ {
 			var sum float32
 			for k := 0; k < K; k++ {
-				// 计算偏移量（行优先）
-				// a[i][k] 的偏移量 = i*K + k
-				// b[k][j] 的偏移量 = k*N + j
+				// Row-major offset calculation:
+				//   a[i][k] → offset = i*K + k
+				//   b[k][j] → offset = k*N + j
 				sum += a.Data[i*K+k] * bTensor.Data[k*N+j]
 			}
 			c.Data[i*N+j] = sum
@@ -106,50 +107,51 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	return c, nil
 }
 
-// Softmax 在最后一个维度上计算 Softmax（原地修改）。
+// Softmax computes softmax over the last dimension (in-place).
 //
-// 算法原理
+// Algorithm
 // ────────
 //
-// Softmax 将一组任意实数转换成一个概率分布（所有值 ∈ [0,1]，和为 1）。
+// Softmax converts an arbitrary vector of real numbers into a probability
+// distribution (all values ∈ (0,1), sum to 1).
 //
-// 朴素版本（数值不稳定——可能在 exp 时溢出）：
+// Naive version (numerically unstable — may overflow in exp):
 //   Softmax(x_i) = exp(x_i) / Σ(exp(x_j))
 //
-// 数值稳定版本（先减去最大值）：
-//   1. 找到当前行最大值 max_val
-//   2. 每个元素: x_i ← exp(x_i - max_val)
-//   3. 求和: sum = Σ(x_i)
-//   4. 每个元素: x_i ← x_i / sum
+// Numerically stable version (subtract max first):
+//   1. Find the maximum value in the row: max_val
+//   2. For each element: x_i ← exp(x_i - max_val)
+//   3. Compute sum: sum = Σ(x_i)
+//   4. For each element: x_i ← x_i / sum
 //
-// 为什么要减 max：
-//   float32 的最大值约 3.4×10³⁸，exp(88) 就接近这个值了。
-//   如果 x 中有一个很大的值（比如 100），exp(100) 立即溢出。
-//   减去最大值后，最大的 exp 项变成 exp(0) = 1，所有项都在安全范围内。
+// Why subtract max:
+//   float32 max is ~3.4×10³⁸. exp(88) already approaches this value.
+//   If any x_i is 100, exp(100) immediately overflows to +Inf.
+//   After subtracting max, the largest term becomes exp(0) = 1,
+//   and all terms are safely representable.
 //
-// 在注意力计算中的角色：
+// Role in attention:
 //   scores = Softmax(Q × K^T / √d_k)
-//   这步之后，scores 的每一行变成一个概率分布，
-//   告诉模型"当前位置应该关注序列中的哪些位置"。
+//   After this, each row of scores tells the model
+//   "how much to attend to each position in the sequence."
 //
-// 注意：该实现永远返回 nil，保留 error 返回值是为了与 compute.Backend
-// 接口一致。未来 GPU 后端可能因为设备错误返回非 nil error。
+// NOTE: This implementation always returns nil. The error return exists
+// for consistency with the compute.Backend interface — GPU backends may
+// return non-nil on device errors.
 func (b *CPUBackend) Softmax(t *tensor.Tensor) error {
-	// 获取最后一个维度的大小
-	// 对于形状 [M, N] 的矩阵，lastDim = N
-	// 对于形状 [B, H, S, S] 的注意力分数，lastDim = S
+	// Get the size of the last dimension
+	// For [M, N] matrix: lastDim = N
+	// For [B, H, S, S] attention scores: lastDim = S
 	n := t.Shape[t.Dims()-1]
 
-	// 外层遍历所有"行"
-	// 行数 = 总元素数 / lastDim
+	// Number of "rows" to process independently
 	rows := t.NumElements() / n
 
 	for r := 0; r < rows; r++ {
-		// 计算行的起始和结束偏移量
 		start := r * n
 		end := start + n
 
-		// Step 1: 找到当前行的最大值（用于数值稳定）
+		// Step 1: Find the row maximum (for numerical stability)
 		maxVal := t.Data[start]
 		for i := start + 1; i < end; i++ {
 			if t.Data[i] > maxVal {
@@ -157,14 +159,14 @@ func (b *CPUBackend) Softmax(t *tensor.Tensor) error {
 			}
 		}
 
-		// Step 2: 计算 exp(x_i - max) 并求和
+		// Step 2: Compute exp(x_i - max) and their sum
 		var sum float32
 		for i := start; i < end; i++ {
 			t.Data[i] = float32(math.Exp(float64(t.Data[i] - maxVal)))
 			sum += t.Data[i]
 		}
 
-		// Step 3: 除以和（归一化到概率分布）
+		// Step 3: Normalize (divide by sum) → probability distribution
 		for i := start; i < end; i++ {
 			t.Data[i] /= sum
 		}
@@ -173,32 +175,32 @@ func (b *CPUBackend) Softmax(t *tensor.Tensor) error {
 	return nil
 }
 
-// RMSNorm 执行 RMS 归一化。
+// RMSNorm computes Root Mean Square Normalization (in-place).
 //
-// 算法原理
+// Algorithm
 // ────────
 //
-// RMSNorm 是 Layer Normalization 的简化版本。
+// RMSNorm is a simplified version of Layer Normalization.
 //
-// LayerNorm 公式：
+// LayerNorm formula:
 //   y = (x - μ) / σ × γ + β
-//   其中 μ = mean(x), σ = sqrt(var(x) + ε)
+//   where μ = mean(x), σ = sqrt(var(x) + ε)
 //
-// RMSNorm 公式（去掉了均值 μ 的计算）：
+// RMSNorm formula (removes the mean computation):
 //   y = x / RMS(x) × γ
-//   其中 RMS(x) = sqrt( (1/N) × Σ(x_j²) + ε )
+//   where RMS(x) = sqrt( (1/N) × Σ(x_j²) + ε )
 //
-// RMSNorm 省略了均值计算，因此比 LayerNorm 快约 30%，
-// 且实验表明在 Transformer 中效果与 LayerNorm 相当。
+// By omitting the mean, RMSNorm is ~30% faster than LayerNorm,
+// and experiments show it performs equally well in Transformers.
 //
-// 参数 weight（γ）是可学习的缩放向量。
-// 每个特征维度有一个缩放因子。
+// The weight parameter (γ) is a learnable scaling vector applied
+// element-wise — each feature dimension has its own scale factor.
 func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
-	// 最后一个维度的大小 = hidden_dim
+	// Last dimension = hidden_dim
 	n := t.Shape[t.Dims()-1]
 	rows := t.NumElements() / n
 
-	// weight 必须是一维向量，长度等于 hidden_dim
+	// weight must be a 1-D vector with length = hidden_dim
 	if weight.Dims() != 1 || weight.NumElements() != n {
 		panic(fmt.Sprintf(
 			"cpu.RMSNorm: weight shape mismatch: got (%d,) but input has hidden_dim %d",
@@ -206,14 +208,14 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 		))
 	}
 
-	// TODO: 从 model.Config 中读取 epsilon，当前硬编码
-	const epsilon = 1e-6 // 防除零
+	// TODO: read epsilon from model.Config instead of hardcoding
+	const epsilon = 1e-6 // prevents division by zero
 
 	for r := 0; r < rows; r++ {
 		start := r * n
 		end := start + n
 
-		// Step 1: 计算 RMS
+		// Step 1: Compute RMS
 		// RMS = sqrt( (1/N) × Σ(x_i²) + ε )
 		var sumSq float32
 		for i := start; i < end; i++ {
@@ -221,7 +223,7 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 		}
 		rms := float32(math.Sqrt(float64(sumSq/float32(n) + epsilon)))
 
-		// Step 2: 归一化并乘以可学习权重
+		// Step 2: Normalize and multiply by learnable weight
 		// y_i = x_i / RMS(x) × weight_i
 		for i := start; i < end; i++ {
 			t.Data[i] = (t.Data[i] / rms) * weight.Data[i-start]
@@ -231,48 +233,49 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 	return nil
 }
 
-// RoPE 对 Q 和 K 施加旋转位置编码。
+// RoPE applies Rotary Position Embedding to Q and K.
 //
-// 算法原理
+// Algorithm
 // ────────
 //
-// 为什么需要位置编码？
-//   Self-attention 本身是位置无关的——交换两个 token 的位置，
-//   注意力分数不会变。所以需要额外的位置信息。
+// Why is position encoding needed?
+//   Self-attention is position-agnostic — swapping two tokens produces
+//   the same attention scores. Position information must be injected separately.
 //
-// RoPE 的核心思想：
-//   把 (q_2i, q_{2i+1}) 看作二维平面上的一个向量，
-//   根据位置 pos 旋转这个向量。旋转矩阵为：
+// RoPE's core idea:
+//   Treat each adjacent pair (q_2i, q_{2i+1}) as a vector on a 2-D plane,
+//   then rotate it by an angle proportional to position pos. The rotation
+//   matrix is:
 //
 //   [cos(pos·θ_i)  -sin(pos·θ_i)]
 //   [sin(pos·θ_i)   cos(pos·θ_i)]
 //
-//   其中 θ_i = base^(-2i/d)，base = 10000
-//   （这里跟 Transformer 原版的位置编码用的 base 是一样的）
+//   where θ_i = base^(-2i/d), base = 10000
+//   (same base as the original Transformer sinusoidal PE)
 //
-// 旋转后：
+// After rotation:
 //   q'_2i   = q_2i × cos(θ) - q_{2i+1} × sin(θ)
 //   q'_{2i+1} = q_{2i+1} × cos(θ) + q_2i × sin(θ)
 //
-// 频率递减设计
-// ──────────
-//   i = 0（最早的对）: θ_0 = 10000^0 = 1 → 旋转最快（编码短距离）
-//   i = d/2-1（最后一对）: θ ≈ 10000^(-1) ≈ 1/10000 → 旋转最慢（编码长距离）
+// Frequency decay
+// ──────────────
+//   i=0 (earliest pair):   θ_0 = 10000⁰ = 1      → fastest rotation (short-range info)
+//   i=d/2-1 (last pair):   θ ≈ 10000⁻¹ ≈ 1/10000 → slowest rotation (long-range info)
 //
-// 这种频率递减的设计和 Transformer 原版的 Sinusoidal PE 完全一致。
-// 靠前的维度编码短距离信息，靠后的维度编码长距离信息。
+// This frequency decay mirrors the original Transformer sinusoidal PE:
+// early dimensions encode short-range information, later ones encode long-range.
 //
-// 在 minfer 中，每次只处理一个 token（decode 阶段），
-// 所以 q 和 k 的 seq_len 维度为 1。
+// In Minfer, decode phase processes one token at a time, so q and k have
+// seq_len = 1.
 //
-// 参数：
-//   q:   Query 当前 token，形状 [1, num_heads, head_dim]
-//   k:   Key 当前 token，形状 [1, num_heads, head_dim]
-//   pos: 当前 token 在序列中的位置
-//   dim: head_dim（如 64 或 128）
+// Parameters:
+//   q:   Query tensor [1, num_heads, head_dim]
+//   k:   Key tensor [1, num_heads, head_dim]
+//   pos: Current token position in the sequence
+//   dim: head_dim (from model config, e.g. 64 or 128)
 func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 
-	// 形状检查：q 和 k 必须是 3 维 [1, num_heads, dim]
+	// Shape validation: q and k must be 3-D [1, num_heads, dim]
 	if q.Dims() != 3 || k.Dims() != 3 {
 		panic("cpu.RoPE: q and k must be 3D tensors [1, num_heads, head_dim]")
 	}
@@ -295,7 +298,7 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 		))
 	}
 
-	// TODO: 从 model.Config 中读取 base，当前硬编码
+	// TODO: read base from model.Config instead of hardcoding
 	const base = 10000.0
 
 	numHeads := q.Shape[1]
@@ -303,24 +306,24 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 
 	for h := 0; h < numHeads; h++ {
 		for i := 0; i < headDim; i += 2 {
-			// 当前维度对在两个 head 中的偏移量
+			// Offset for this dimension pair within this head
 			offset := h*headDim + i
 
-			// 计算 θ_i
-			// 公式: θ_i = base^(-2i/d) = 1 / base^(2i/d)
+			// Compute θ_i
+			// Formula: θ_i = base^(-2i/d) = 1 / base^(2i/d)
 			freq := 1.0 / math.Pow(base, float64(i)/float64(headDim))
 
-			// 计算 cos 和 sin
+			// Compute cos and sin for this position
 			cosVal := float32(math.Cos(float64(pos) * freq))
 			sinVal := float32(math.Sin(float64(pos) * freq))
 
-			// 对 Q 施加旋转
+			// Apply rotation to Q
 			q0 := q.Data[offset]
 			q1 := q.Data[offset+1]
 			q.Data[offset] = q0*cosVal - q1*sinVal
 			q.Data[offset+1] = q1*cosVal + q0*sinVal
 
-			// 对 K 施加旋转（同样的 cos/sin）
+			// Apply same rotation to K
 			k0 := k.Data[offset]
 			k1 := k.Data[offset+1]
 			k.Data[offset] = k0*cosVal - k1*sinVal
@@ -331,32 +334,31 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 	return nil
 }
 
-// Silu 计算 SiLU 激活函数（原地修改）。
+// Silu computes the SiLU (Sigmoid Linear Unit) activation function (in-place).
 //
-// 数学定义：
+// Mathematical definition:
 //   SiLU(x) = x × sigmoid(x) = x / (1 + exp(-x))
 //
-// SiLU 也叫 Swish（Google 2017 年提出），
-// 是 ReLU 的平滑版本：
+// SiLU is also known as Swish (Google, 2017). It is a smooth version of ReLU:
 //
-//   ReLU:    x > 0 → x, x ≤ 0 → 0
-//   SiLU:    负半轴有微小负值，0 附近平滑过渡
+//   ReLU:  x > 0 → x, x ≤ 0 → 0
+//   SiLU:  small negative values on the negative side, smooth near 0
 //
-// 平滑梯度的好处：
-//   ReLU 在 x=0 处不可导，可能导致神经元"死亡"
-//   （一旦进入负半轴就永远输出 0，梯度为 0，彻底不学习）。
-//   SiLU 在 0 附近有连续导数，不会完全死亡。
+// The smooth gradient near 0 prevents "dead neurons" — once a ReLU neuron
+// enters the negative region, its gradient is 0 forever and it stops learning.
+// SiLU's gradient never completely vanishes.
 //
-// 在 SwiGLU FFN 中的角色：
-//   gate = SiLU(x × W_gate)  ← 这是"门控"信号
-//   up   = x × W_up           ← 这是"内容"信号
-//   out  = (gate × up) × W_down  ← 门控×内容后投影回 hidden_dim
+// In the SwiGLU FFN (前馈网络):
+//   gate = SiLU(x × W_gate)  ← the "gating" signal
+//   up   = x × W_up           ← the "content" signal
+//   out  = (gate ⊙ up) × W_down  ← gated content projected back to hidden_dim
 //
-// 门控机制让 FFN 可以"决定"哪些信息通过、哪些被抑制。
-// 这是 SwiGLU 比标准 ReLU FFN 效果更好的原因。
+// The gating mechanism lets the FFN decide which information passes through
+// and which gets suppressed. This is why SwiGLU outperforms standard ReLU FFNs.
 //
-// 注意：该实现永远返回 nil，保留 error 返回值是为了与 compute.Backend
-// 接口一致。未来 GPU 后端可能因为设备错误返回非 nil error。
+// NOTE: This implementation always returns nil. The error return exists
+// for consistency with the compute.Backend interface — GPU backends may
+// return non-nil on device errors.
 func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 	for i := range t.Data {
 		// sigmoid(x) = 1 / (1 + exp(-x))
@@ -365,18 +367,17 @@ func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 	return nil
 }
 
-// Add 执行逐元素加法：c = a + b
+// Add computes element-wise addition: c = a + b
 //
-// a 和 b 必须有相同形状。
-// Panic 条件：a 和 b 形状不同。
+// a and b must have identical shapes.
+// Panics if shapes differ.
 //
-// 在 Transformer 中用于残差连接（Residual Connection）：
-//   output = sub_layer(output) + output
+// In Transformers this implements the residual connection (残差连接):
+//   output = sub_layer(x) + x
 //
-// 残差连接的意义：
-//   如果没有残差连接，深层网络容易出现"梯度消失"问题——
-//   梯度经过多层反向传播后趋近于 0，浅层权重几乎得不到更新。
-//   残差连接让梯度有一条"高速公路"直达浅层。
+// The residual connection is crucial for training deep networks:
+// without it, gradients vanish as they back-propagate through many layers.
+// The residual path gives gradients a "highway" directly back to early layers.
 func (b *CPUBackend) Add(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	if len(a.Shape) != len(bTensor.Shape) {
 		panic("cpu.Add: tensors have different number of dimensions")

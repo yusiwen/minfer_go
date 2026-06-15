@@ -7,9 +7,9 @@ import (
 	"github.com/yusiwen/minfer/internal/tensor"
 )
 
-// TestMatMul 测试 2×3 × 3×2 = 2×2 的矩阵乘法。
+// TestMatMul tests 2×3 × 3×2 = 2×2 matrix multiplication.
 //
-// 手工验证：
+// Manual verification:
 //   A = ⎡1 2 3⎤   B = ⎡7  8⎤
 //       ⎣4 5 6⎦       ⎢9  10⎥
 //                      ⎣11 12⎦
@@ -19,8 +19,8 @@ import (
 //   C[1][0] = 4×7 + 5×9 + 6×11 = 28 + 45 + 66 = 139
 //   C[1][1] = 4×8 + 5×10 + 6×12 = 32 + 50 + 72 = 154
 //
-//   结果: C = ⎡58  64⎤
-//            ⎣139 154⎦
+//   Result: C = ⎡58  64⎤
+//               ⎣139 154⎦
 func TestMatMul(t *testing.T) {
 	backend := New()
 
@@ -48,7 +48,7 @@ func TestMatMul(t *testing.T) {
 	}
 }
 
-// TestMatMul1x4x4 测试 1×4 × 4×1 = 1×1（向量内积）。
+// TestMatMul1x4x4 tests 1×4 × 4×1 = 1×1 (vector dot product).
 func TestMatMul1x4x4(t *testing.T) {
 	backend := New()
 
@@ -65,7 +65,7 @@ func TestMatMul1x4x4(t *testing.T) {
 	}
 }
 
-// TestSoftmax 验证 Softmax 结果行和为 1。
+// TestSoftmax verifies softmax outputs sum to 1 per row.
 func TestSoftmax(t *testing.T) {
 	backend := New()
 
@@ -74,14 +74,14 @@ func TestSoftmax(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 验证所有值都在 (0, 1) 之间
+	// Verify all values are in (0, 1)
 	for _, v := range t1.Data {
 		if v <= 0 || v >= 1 {
 			t.Errorf("Softmax output %f not in (0,1)", v)
 		}
 	}
 
-	// 验证每行和为 1
+	// Verify each row sums to 1
 	if abs(t1.Data[0]+t1.Data[1]+t1.Data[2]-1) > 1e-4 {
 		t.Errorf("Row 0 sum = %f, want 1", t1.Data[0]+t1.Data[1]+t1.Data[2])
 	}
@@ -90,7 +90,7 @@ func TestSoftmax(t *testing.T) {
 	}
 }
 
-// TestAdd 验证逐元素加法。
+// TestAdd verifies element-wise addition.
 func TestAdd(t *testing.T) {
 	backend := New()
 
@@ -109,7 +109,7 @@ func TestAdd(t *testing.T) {
 	}
 }
 
-// TestSiLU 验证 SiLU 函数的边界值。
+// TestSiLU verifies SiLU function at known values.
 func TestSiLU(t *testing.T) {
 	backend := New()
 
@@ -118,8 +118,8 @@ func TestSiLU(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 验证已知值（使用高精度计算工具预先算好的）
-	// SiLU(x) = x * sigmoid(x)，手工验证几个点
+	// Verify against pre-computed values
+	// SiLU(x) = x * sigmoid(x)
 	expected := []float32{
 		-2 * 0.1192029, // SiLU(-2) ≈ -0.238
 		-1 * 0.2689414, // SiLU(-1) ≈ -0.269
@@ -133,8 +133,8 @@ func TestSiLU(t *testing.T) {
 		}
 	}
 
-	// SiLU 的性质：存在一个最小值（约 x ≈ -1.278），不是全局单调的
-	// 但 SiLU(0)=0，且 x>0 时 SiLU(x)>0
+	// SiLU property: there is a minimum near x ≈ -1.278 (not globally monotonic)
+	// But for x ≥ 0, output should be ≥ 0
 	for i := 2; i < len(t1.Data); i++ {
 		if t1.Data[i] < 0 {
 			t.Errorf("SiLU(%d) = %f should be >= 0 for x >= 0", i-2, t1.Data[i])
@@ -142,11 +142,11 @@ func TestSiLU(t *testing.T) {
 	}
 }
 
-// TestRMSNorm 验证 RMSNorm 的 RMS 值。
+// TestRMSNorm verifies RMSNorm output has RMS = 1.
 func TestRMSNorm(t *testing.T) {
 	backend := New()
 
-	// 输入 [1, 2, 3, 4]，weight 全 1
+	// Input [1, 2, 3, 4], weight all ones
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	weight := tensor.NewWithData([]float32{1, 1, 1, 1}, 4)
 
@@ -154,7 +154,7 @@ func TestRMSNorm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 验证 RMSNorm 后向量的 RMS 为 1
+	// Verify RMS of normalized vector is 1
 	var sumSq float32
 	for _, v := range t1.Data {
 		sumSq += v * v
@@ -165,15 +165,15 @@ func TestRMSNorm(t *testing.T) {
 	}
 }
 
-// TestRoPE 验证 RoPE 的结果维度不变。
+// TestRoPE verifies RoPE at position 0 (should be identity) and position 1 (should change).
 func TestRoPE(t *testing.T) {
 	backend := New()
 
-	// q, k 形状 [1, 2, 4]（1 token, 2 heads, 4 dims）
+	// q, k shape [1, 2, 4] (1 token, 2 heads, 4 dims)
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
 	k := tensor.NewWithData([]float32{3, 3, 3, 3, 4, 4, 4, 4}, 1, 2, 4)
 
-	// 保存原始数据
+	// Save original values
 	qOrig := q.Clone()
 	kOrig := k.Clone()
 
@@ -181,7 +181,7 @@ func TestRoPE(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 验证位置 0：cos(0)=1, sin(0)=0，结果应不变
+	// Position 0: cos(0)=1, sin(0)=0, result should be unchanged
 	for i := range q.Data {
 		if abs(q.Data[i]-qOrig.Data[i]) > 1e-4 {
 			t.Errorf("RoPE(pos=0) changed q[%d] from %f to %f", i, qOrig.Data[i], q.Data[i])
@@ -191,7 +191,7 @@ func TestRoPE(t *testing.T) {
 		}
 	}
 
-	// 验证位置 1：cos≠0, sin≠0，结果应变化
+	// Position 1: cos≠0, sin≠0, result should differ
 	if err := backend.RoPE(q, k, 1, 4); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRoPE(t *testing.T) {
 	}
 }
 
-// 辅助函数
+// Helper: absolute value for float32
 func abs(x float32) float32 {
 	if x < 0 {
 		return -x
@@ -215,8 +215,9 @@ func abs(x float32) float32 {
 	return x
 }
 
-// expectPanic 验证 fn 会 panic，且 panic 消息以 prefix 开头。
-// 比只检查 r==nil 更严谨——避免"错误的地方 panic 了但测试误以为正确"。
+// expectPanic verifies fn panics and the panic message starts with msgPrefix.
+// Verifying the message is important: it ensures the RIGHT panic fires,
+// not just any panic from an unrelated code path.
 func expectPanic(t *testing.T, msgPrefix string, fn func()) {
 	t.Helper()
 	defer func() {
@@ -235,7 +236,7 @@ func expectPanic(t *testing.T, msgPrefix string, fn func()) {
 	fn()
 }
 
-// TestMatMulPanicShape 验证 MatMul 在输入不是 2D 时 panic。
+// TestMatMulPanicShape verifies MatMul panics on non-2D input.
 func TestMatMulPanicShape(t *testing.T) {
 	backend := New()
 	a := tensor.NewWithData([]float32{1, 2, 3, 4, 5, 6, 7, 8}, 2, 2, 2)
@@ -245,7 +246,7 @@ func TestMatMulPanicShape(t *testing.T) {
 	})
 }
 
-// TestMatMulPanicInnerDim 验证 MatMul 在内维度不匹配时 panic。
+// TestMatMulPanicInnerDim verifies MatMul panics on inner dimension mismatch.
 func TestMatMulPanicInnerDim(t *testing.T) {
 	backend := New()
 	a := tensor.NewWithData([]float32{1, 2, 3, 4}, 2, 2)
@@ -255,7 +256,7 @@ func TestMatMulPanicInnerDim(t *testing.T) {
 	})
 }
 
-// TestSoftmaxUniform 验证所有值相等时，Softmax 输出均匀分布。
+// TestSoftmaxUniform verifies uniform input → uniform output.
 func TestSoftmaxUniform(t *testing.T) {
 	backend := New()
 	t1 := tensor.NewWithData([]float32{5, 5, 5, 5}, 1, 4)
@@ -269,17 +270,17 @@ func TestSoftmaxUniform(t *testing.T) {
 	}
 }
 
-// TestSoftmaxNumericalStability 验证大值不会溢出。
+// TestSoftmaxNumericalStability verifies large values don't overflow.
 //
-// 如果没有数值稳定技巧（先减 max），exp(1000) 会 overflow 到 +Inf。
-// 减去 max=1000 后，所有项变成 exp(0)=1，结果应该是均匀分布。
+// Without the "subtract max" trick, exp(1000) would overflow to +Inf.
+// After subtracting max=1000, all terms become exp(0)=1, producing
+// a uniform distribution.
 func TestSoftmaxNumericalStability(t *testing.T) {
 	backend := New()
 	t1 := tensor.NewWithData([]float32{1000, 1000, 1000}, 1, 3)
 	if err := backend.Softmax(t1); err != nil {
 		t.Fatal(err)
 	}
-	// 如果没有溢出，结果就是 1/3 ≈ 0.3333
 	for i, v := range t1.Data {
 		if abs(v-1.0/3.0) > 1e-4 {
 			t.Errorf("numerical stability: element %d = %f, want 0.3333", i, v)
@@ -287,30 +288,27 @@ func TestSoftmaxNumericalStability(t *testing.T) {
 	}
 }
 
-// TestSoftmaxLargeDiff 验证值差距极大时 exp 不会下溢成 0。
+// TestSoftmaxLargeDiff verifies behavior with extremely different values.
 //
-// 输入 [1000, 0, -1000] → max=1000 减 max 后变成 [0, -1000, -2000]
-// exp(0)=1, exp(-1000)=0 (underflow), exp(-2000)=0 (underflow)
-// 结果应该接近 [1, 0, 0]，但下溢的项变成严格 0 而非极小正数。
-// 这是 float32 精度限制，在 LLM 推理中不是问题。
+// Input [1000, 0, -1000]: max=1000, after subtract: [0, -1000, -2000]
+// exp(0)=1, exp(-1000) underflows to 0, exp(-2000) underflows to 0
+// Result ≈ [1, 0, 0]. The underflowed terms become exact 0 (float32 limit).
 func TestSoftmaxLargeDiff(t *testing.T) {
 	backend := New()
 	t1 := tensor.NewWithData([]float32{1000, 0, -1000}, 1, 3)
 	if err := backend.Softmax(t1); err != nil {
 		t.Fatal(err)
 	}
-	// 第一个元素 ≈ 1，后两个接近 0
 	if abs(t1.Data[0]-1) > 1e-4 {
 		t.Errorf("expected first element ≈ 1, got %f", t1.Data[0])
 	}
-	// 和为 1
 	sum := t1.Data[0] + t1.Data[1] + t1.Data[2]
 	if abs(sum-1) > 1e-4 {
 		t.Errorf("Softmax sum = %f, want 1", sum)
 	}
 }
 
-// TestRMSNorm2D 验证 2 维输入（[batch, dim]）的 RMSNorm。
+// TestRMSNorm2D verifies RMSNorm on 2-D input ([batch, dim]).
 func TestRMSNorm2D(t *testing.T) {
 	backend := New()
 
@@ -324,7 +322,7 @@ func TestRMSNorm2D(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 验证每行的 RMS 为 1
+	// Verify each row has RMS = 1
 	for r := 0; r < 2; r++ {
 		start := r * 4
 		var sumSq float32
@@ -337,7 +335,7 @@ func TestRMSNorm2D(t *testing.T) {
 		}
 	}
 
-	// 第 0 行和第 1 行的形状应该成比例（weight 相同，输入成比例）
+	// Rows 0 and 1 should be proportional (same weight, proportional input)
 	ratio := t1.Data[0] / t1.Data[4]
 	for i := 0; i < 4; i++ {
 		gotRatio := t1.Data[i] / t1.Data[i+4]
@@ -347,23 +345,23 @@ func TestRMSNorm2D(t *testing.T) {
 	}
 }
 
-// TestRMSNormWeight 验证 RMSNorm 的 weight 缩放效果。
+// TestRMSNormWeight verifies RMSNorm weight scaling.
 func TestRMSNormWeight(t *testing.T) {
 	backend := New()
 
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
-	weight := tensor.NewWithData([]float32{2, 2, 2, 2}, 4) // 全 2 倍的 weight
+	weight := tensor.NewWithData([]float32{2, 2, 2, 2}, 4) // all 2× weight
 
 	if err := backend.RMSNorm(t1, weight); err != nil {
 		t.Fatal(err)
 	}
 
-	// 用全 1 weight 的版本做对比
+	// Compare with unit-weight version
 	t2 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	w2 := tensor.NewWithData([]float32{1, 1, 1, 1}, 4)
 	backend.RMSNorm(t2, w2)
 
-	// 全 2 的 weight 应该使输出翻倍
+	// All-2 weight should double the output
 	for i := range t1.Data {
 		if abs(t1.Data[i]-t2.Data[i]*2) > 1e-4 {
 			t.Errorf("Weight scaling: element %d: got %f, want %f (2×)", i, t1.Data[i], t2.Data[i]*2)
@@ -371,7 +369,7 @@ func TestRMSNormWeight(t *testing.T) {
 	}
 }
 
-// TestRMSNormZeroInput 验证全零输入不会出错（rms=epsilon，输出为零）。
+// TestRMSNormZeroInput verifies all-zero input doesn't crash (rms=epsilon, output=0).
 func TestRMSNormZeroInput(t *testing.T) {
 	backend := New()
 
@@ -389,7 +387,7 @@ func TestRMSNormZeroInput(t *testing.T) {
 	}
 }
 
-// TestAddPanic 验证 Add 在形状不匹配时 panic。
+// TestAddPanic verifies Add panics on shape mismatch.
 func TestAddPanic(t *testing.T) {
 	backend := New()
 	a := tensor.NewWithData([]float32{1, 2, 3}, 3)
@@ -399,7 +397,7 @@ func TestAddPanic(t *testing.T) {
 	})
 }
 
-// TestAddPanicDims 验证 Add 在维度数不匹配时 panic。
+// TestAddPanicDims verifies Add panics on dimension count mismatch.
 func TestAddPanicDims(t *testing.T) {
 	backend := New()
 	a := tensor.NewWithData([]float32{1, 2, 3, 4}, 2, 2)
@@ -409,17 +407,17 @@ func TestAddPanicDims(t *testing.T) {
 	})
 }
 
-// TestRoPEPreserveNorm 验证 RoPE 保持向量模长。
+// TestRoPEPreserveNorm verifies RoPE preserves vector magnitude.
 //
-// RoPE 是正交变换（旋转矩阵），不改变向量长度。
-// 对每个 (2i, 2i+1) 对，旋转前后模长应该不变：
+// RoPE is an orthogonal transformation (rotation matrix), so it must
+// preserve the L2 norm. For each (2i, 2i+1) pair, the squared norm
+// before and after rotation should be identical:
 //   q'_2i² + q'_{2i+1}² = q_2i² + q_{2i+1}²
 func TestRoPEPreserveNorm(t *testing.T) {
 	backend := New()
 
-	// 使用非平凡的初始值
 	q := tensor.NewWithData([]float32{
-		0.5, 1.5, -1.0, 2.0, // head 0: (0,1), (2,3)
+		0.5, 1.5, -1.0, 2.0, // head 0: pairs (0,1), (2,3)
 		1.0, -0.5, 3.0, 0.0, // head 1
 	}, 1, 2, 4)
 
@@ -429,7 +427,7 @@ func TestRoPEPreserveNorm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 对每个 head 和每个维度对，验证模长不变
+	// For each head and each dimension pair, verify norm unchanged
 	headDim := 4
 	numHeads := 2
 	for h := 0; h < numHeads; h++ {
@@ -445,7 +443,7 @@ func TestRoPEPreserveNorm(t *testing.T) {
 	}
 }
 
-// TestRoPEPanicDims 验证 RoPE 在输入不是 3D 时 panic。
+// TestRoPEPanicDims verifies RoPE panics on non-3D input.
 func TestRoPEPanicDims(t *testing.T) {
 	backend := New()
 	q := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
@@ -455,7 +453,7 @@ func TestRoPEPanicDims(t *testing.T) {
 	})
 }
 
-// TestRoPEPanicDimMismatch 验证 RoPE 在 dim 与 q/k 的 head_dim 不匹配时 panic。
+// TestRoPEPanicDimMismatch verifies RoPE panics when dim doesn't match head_dim.
 func TestRoPEPanicDimMismatch(t *testing.T) {
 	backend := New()
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
@@ -465,7 +463,7 @@ func TestRoPEPanicDimMismatch(t *testing.T) {
 	})
 }
 
-// TestRoPEPanicHeadsMismatch 验证 RoPE 在 q/k 的 num_heads 不同时 panic。
+// TestRoPEPanicHeadsMismatch verifies RoPE panics when q and k have different num_heads.
 func TestRoPEPanicHeadsMismatch(t *testing.T) {
 	backend := New()
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
@@ -475,10 +473,10 @@ func TestRoPEPanicHeadsMismatch(t *testing.T) {
 	})
 }
 
-// TestRoPEPanicOddDim 验证 RoPE 在 head_dim 为奇数时 panic。
-// 注意：q 和 k 的 head_dim 必须等于 dim=7，才能触发奇数检查而不是 dim 不匹配检查。
+// TestRoPEPanicOddDim verifies RoPE panics on odd head_dim.
 func TestRoPEPanicOddDim(t *testing.T) {
 	backend := New()
+	// head_dim=7 must equal dim=7 so the dim check passes and oddity check fires
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
 	k := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
 	expectPanic(t, "cpu.RoPE: head_dim must be even", func() {
@@ -486,7 +484,7 @@ func TestRoPEPanicOddDim(t *testing.T) {
 	})
 }
 
-// TestRMSNormPanicWeightDim 验证 RMSNorm 在 weight 维度不匹配时 panic。
+// TestRMSNormPanicWeightDim verifies RMSNorm panics when weight length doesn't match hidden_dim.
 func TestRMSNormPanicWeightDim(t *testing.T) {
 	backend := New()
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
@@ -496,7 +494,7 @@ func TestRMSNormPanicWeightDim(t *testing.T) {
 	})
 }
 
-// TestRMSNormPanicWeightNot1D 验证 RMSNorm 在 weight 不是 1D 时 panic。
+// TestRMSNormPanicWeightNot1D verifies RMSNorm panics when weight is not 1-D.
 func TestRMSNormPanicWeightNot1D(t *testing.T) {
 	backend := New()
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)

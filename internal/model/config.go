@@ -1,64 +1,70 @@
-// Package model 定义了模型配置和 Transformer 各层的接口。
+// Package model defines model configuration and Transformer layer interfaces.
 //
-// 模型配置从 GGUF 文件的 metadata 中读取，包含模型架构所需的全部参数。
-// 这些参数在模型加载时确定，推理过程中不变。
+// Model configuration is read from GGUF file metadata and contains all
+// architecture hyper-parameters needed to build the model. These are
+// determined at load time and never change during inference.
 package model
 
-// Config 存储模型架构的所有超参数。
+// Config stores all hyper-parameters of the model architecture.
 //
-// 这些参数从 GGUF 文件的 metadata 中读取（如 llama.block_count、llama.attention.head_count 等）。
-// 不同模型架构（Qwen2、LLaMA、Phi）的参数命名有细微差别，
-// 但核心参数是相同的。
+// These parameters are read from GGUF file metadata (e.g.
+// llama.block_count, llama.attention.head_count). Different model
+// architectures (Qwen2, LLaMA, Phi) use slightly different key names,
+// but the core parameters are the same.
 type Config struct {
-	// HiddenDim 是隐藏层维度（也叫 hidden_size、n_embd）。
-	// 这是 Transformer 中最核心的维度——所有中间表示都使用这个维度。
-	// 常见值：Qwen2.5-0.5B = 896, Qwen2.5-1.5B = 1536, LLaMA-7B = 4096
+	// HiddenDim is the hidden layer dimension (also called hidden_size, n_embd).
+	// This is the central dimension of the Transformer — all intermediate
+	// representations use this size.
+	// Typical values: Qwen2.5-0.5B = 896, Qwen2.5-1.5B = 1536, LLaMA-7B = 4096
 	HiddenDim int
 
-	// NumLayers 是 Transformer Block 的数量（也叫 n_layer）。
-	// 常见值：Qwen2.5-0.5B = 24, Qwen2.5-1.5B = 28, LLaMA-7B = 32
+	// NumLayers is the number of Transformer Blocks (also called n_layer).
+	// Typical values: Qwen2.5-0.5B = 24, Qwen2.5-1.5B = 28, LLaMA-7B = 32
 	NumLayers int
 
-	// NumHeads 是注意力头的数量（也叫 n_head）。
-	// 每个头独立计算注意力，结果拼接后投影。
-	// 常见值：Qwen2.5-0.5B = 14, Qwen2.5-1.5B = 12, LLaMA-7B = 32
+	// NumHeads is the number of attention heads (also called n_head).
+	// Each head computes attention independently; results are concatenated
+	// and projected.
+	// Typical values: Qwen2.5-0.5B = 14, Qwen2.5-1.5B = 12, LLaMA-7B = 32
 	NumHeads int
 
-	// HeadDim 是每个注意力头的维度。
-	// 通常等于 HiddenDim / NumHeads。
-	// 常见值：64 或 128
+	// HeadDim is the dimension of each attention head.
+	// Usually equals HiddenDim / NumHeads.
+	// Typical values: 64 or 128
 	HeadDim int
 
-	// NumKVHeads 是 K 和 V 的头数（GQA/MQA 相关）。
-	// MHA（默认）：NumKVHeads == NumHeads
-	// GQA：NumKVHeads < NumHeads（如 LLaMA-2-70B: 8 KV heads, 64 Q heads）
-	// MQA：NumKVHeads == 1（所有 Q head 共享一个 KV 投影）
+	// NumKVHeads is the number of K and V heads (for GQA/MQA).
+	// MHA (Multi-Head Attention, 多头注意力): NumKVHeads == NumHeads
+	// GQA (Grouped Query Attention, 分组查询注意力): NumKVHeads < NumHeads
+	// MQA (Multi-Query Attention, 多查询注意力): NumKVHeads == 1
 	NumKVHeads int
 
-	// FFNHiddenDim 是 FFN 中间层的维度（也叫 n_inner、intermediate_size）。
-	// SwiGLU 的公式：hidden_dim × W_gate → FFNHiddenDim
-	// 通常：FFNHiddenDim ≈ (8/3) * 4 * HiddenDim（考虑 SwiGLU 的 3 个投影矩阵）
+	// FFNHiddenDim is the intermediate dimension of the FFN (前馈网络)
+	// (also called n_inner, intermediate_size).
+	// SwiGLU formula: hidden_dim × W_gate → FFNHiddenDim
+	// Typical: FFNHiddenDim ≈ (8/3) × 4 × HiddenDim (accounting for SwiGLU's 3 matrices)
 	FFNHiddenDim int
 
-	// MaxSeqLen 是模型支持的最大序列长度（上下文窗口）。
-	// 常见值：Qwen2.5 = 32768, LLaMA-3 = 8192
+	// MaxSeqLen is the maximum sequence length the model supports
+	// (context window, 上下文窗口).
+	// Typical values: Qwen2.5 = 32768, LLaMA-3 = 8192
 	MaxSeqLen int
 
-	// VocabSize 是词表大小。
-	// 常见值：Qwen2.5 = 151936, LLaMA-3 = 128256
+	// VocabSize is the vocabulary size (词表大小).
+	// Typical values: Qwen2.5 = 151936, LLaMA-3 = 128256
 	VocabSize int
 
-	// NormEpsilon 是归一化中的极小常数，防除零。
-	// 通常为 1e-5 或 1e-6。
+	// NormEpsilon is the tiny constant in normalization to prevent division by zero.
+	// Typically 1e-5 or 1e-6.
 	NormEpsilon float32
 
-	// RoPEBase 是 RoPE 的 base 频率。
-	// 标准值为 10000.0，有些长上下文模型会增大它（如 500000.0）。
+	// RoPEBase is the base frequency for RoPE (旋转位置编码).
+	// Standard value is 10000.0, some long-context models increase it (e.g. 500000.0).
 	RoPEBase float32
 }
 
-// DefaultConfig 返回一个适用于测试的默认配置。
-// 这些参数模仿了一个小型模型（类似 TinyLlama）。
+// DefaultConfig returns a test-friendly default configuration.
+// These parameters approximate a small model (similar to TinyLlama).
 func DefaultConfig() Config {
 	return Config{
 		HiddenDim:   512,
