@@ -24,8 +24,12 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/yusiwen/minfer/internal/compute"
 	"github.com/yusiwen/minfer/internal/tensor"
 )
+
+// 编译期检查：CPUBackend 是否实现了 compute.Backend 接口
+var _ compute.Backend = (*CPUBackend)(nil)
 
 // CPUBackend 实现了 compute.Backend 接口。
 // 所有方法都用纯 Go 实现。

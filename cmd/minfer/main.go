@@ -64,7 +64,7 @@ architecture, KV cache, and sampling.`,
 
 	// pull 子命令（占位，后续实现）
 	pullCmd := &cobra.Command{
-		Use:   "pull [model-ref]",
+		Use:   "pull <model-ref>",
 		Short: "Download a model from Hugging Face or Ollama registry",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {

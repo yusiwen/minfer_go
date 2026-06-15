@@ -1,6 +1,7 @@
 package cpu
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yusiwen/minfer/internal/tensor"
@@ -214,35 +215,44 @@ func abs(x float32) float32 {
 	return x
 }
 
+// expectPanic 验证 fn 会 panic，且 panic 消息以 prefix 开头。
+// 比只检查 r==nil 更严谨——避免"错误的地方 panic 了但测试误以为正确"。
+func expectPanic(t *testing.T, msgPrefix string, fn func()) {
+	t.Helper()
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic with prefix %q, but none occurred", msgPrefix)
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected panic string, got %T: %v", r, r)
+		}
+		if !strings.HasPrefix(msg, msgPrefix) {
+			t.Errorf("panic message should start with %q, got %q", msgPrefix, msg)
+		}
+	}()
+	fn()
+}
+
 // TestMatMulPanicShape 验证 MatMul 在输入不是 2D 时 panic。
 func TestMatMulPanicShape(t *testing.T) {
 	backend := New()
-
-	// 3D tensor
 	a := tensor.NewWithData([]float32{1, 2, 3, 4, 5, 6, 7, 8}, 2, 2, 2)
 	b := tensor.NewWithData([]float32{1, 2, 3, 4}, 2, 2)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for 3D input")
-		}
-	}()
-	backend.MatMul(a, b)
+	expectPanic(t, "cpu.MatMul: inputs must be 2D tensors", func() {
+		backend.MatMul(a, b)
+	})
 }
 
 // TestMatMulPanicInnerDim 验证 MatMul 在内维度不匹配时 panic。
 func TestMatMulPanicInnerDim(t *testing.T) {
 	backend := New()
-
 	a := tensor.NewWithData([]float32{1, 2, 3, 4}, 2, 2)
 	b := tensor.NewWithData([]float32{1, 2, 3, 4, 5, 6}, 3, 2) // A[2,2] × B[3,2] → 2≠3
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for inner dim mismatch")
-		}
-	}()
-	backend.MatMul(a, b)
+	expectPanic(t, "cpu.MatMul: shape mismatch", func() {
+		backend.MatMul(a, b)
+	})
 }
 
 // TestSoftmaxUniform 验证所有值相等时，Softmax 输出均匀分布。
@@ -382,31 +392,21 @@ func TestRMSNormZeroInput(t *testing.T) {
 // TestAddPanic 验证 Add 在形状不匹配时 panic。
 func TestAddPanic(t *testing.T) {
 	backend := New()
-
 	a := tensor.NewWithData([]float32{1, 2, 3}, 3)
 	b := tensor.NewWithData([]float32{4, 5, 6, 7}, 4)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for shape mismatch")
-		}
-	}()
-	backend.Add(a, b)
+	expectPanic(t, "cpu.Add: tensors have different", func() {
+		backend.Add(a, b)
+	})
 }
 
 // TestAddPanicDims 验证 Add 在维度数不匹配时 panic。
 func TestAddPanicDims(t *testing.T) {
 	backend := New()
-
 	a := tensor.NewWithData([]float32{1, 2, 3, 4}, 2, 2)
 	b := tensor.NewWithData([]float32{4, 5, 6}, 3)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for dim mismatch")
-		}
-	}()
-	backend.Add(a, b)
+	expectPanic(t, "cpu.Add: tensors have different", func() {
+		backend.Add(a, b)
+	})
 }
 
 // TestRoPEPreserveNorm 验证 RoPE 保持向量模长。
@@ -448,89 +448,60 @@ func TestRoPEPreserveNorm(t *testing.T) {
 // TestRoPEPanicDims 验证 RoPE 在输入不是 3D 时 panic。
 func TestRoPEPanicDims(t *testing.T) {
 	backend := New()
-
-	q := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)    // 1D
-	k := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)    // 1D
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for 1D input")
-		}
-	}()
-	backend.RoPE(q, k, 0, 4)
+	q := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
+	k := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
+	expectPanic(t, "cpu.RoPE: q and k must be 3D tensors", func() {
+		backend.RoPE(q, k, 0, 4)
+	})
 }
 
 // TestRoPEPanicDimMismatch 验证 RoPE 在 dim 与 q/k 的 head_dim 不匹配时 panic。
 func TestRoPEPanicDimMismatch(t *testing.T) {
 	backend := New()
-
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
 	k := tensor.NewWithData([]float32{3, 3, 3, 3, 4, 4, 4, 4}, 1, 2, 4)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for dim mismatch")
-		}
-	}()
-	backend.RoPE(q, k, 0, 8) // dim=8 ≠ q.Shape[2]=4 → panic
+	expectPanic(t, "cpu.RoPE: head_dim mismatch", func() {
+		backend.RoPE(q, k, 0, 8) // dim=8 ≠ q.Shape[2]=4
+	})
 }
 
 // TestRoPEPanicHeadsMismatch 验证 RoPE 在 q/k 的 num_heads 不同时 panic。
 func TestRoPEPanicHeadsMismatch(t *testing.T) {
 	backend := New()
-
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
-	k := tensor.NewWithData([]float32{3, 3, 3, 3}, 1, 1, 4) // 1 head vs 2 heads
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for num_heads mismatch")
-		}
-	}()
-	backend.RoPE(q, k, 0, 4)
+	k := tensor.NewWithData([]float32{3, 3, 3, 3}, 1, 1, 4)
+	expectPanic(t, "cpu.RoPE: num_heads mismatch", func() {
+		backend.RoPE(q, k, 0, 4)
+	})
 }
 
 // TestRoPEPanicOddDim 验证 RoPE 在 head_dim 为奇数时 panic。
+// 注意：q 和 k 的 head_dim 必须等于 dim=7，才能触发奇数检查而不是 dim 不匹配检查。
 func TestRoPEPanicOddDim(t *testing.T) {
 	backend := New()
-
-	q := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 6)
-	k := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 6)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for odd head_dim")
-		}
-	}()
-	backend.RoPE(q, k, 0, 7) // dim=7 is odd → panic
+	q := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
+	k := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
+	expectPanic(t, "cpu.RoPE: head_dim must be even", func() {
+		backend.RoPE(q, k, 0, 7) // dim=7 is odd
+	})
 }
 
 // TestRMSNormPanicWeightDim 验证 RMSNorm 在 weight 维度不匹配时 panic。
 func TestRMSNormPanicWeightDim(t *testing.T) {
 	backend := New()
-
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	weight := tensor.NewWithData([]float32{1, 1}, 2) // hidden_dim=4, weight has 2
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for weight dim mismatch")
-		}
-	}()
-	backend.RMSNorm(t1, weight)
+	expectPanic(t, "cpu.RMSNorm: weight shape mismatch", func() {
+		backend.RMSNorm(t1, weight)
+	})
 }
 
-// TestRMSNormPanicWeightNot1D 验证 RMSNorm 在 weight 不是1D时 panic。
+// TestRMSNormPanicWeightNot1D 验证 RMSNorm 在 weight 不是 1D 时 panic。
 func TestRMSNormPanicWeightNot1D(t *testing.T) {
 	backend := New()
-
 	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	weight := tensor.NewWithData([]float32{1, 1, 1, 1}, 2, 2) // 2D weight
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for 2D weight")
-		}
-	}()
-	backend.RMSNorm(t1, weight)
+	expectPanic(t, "cpu.RMSNorm: weight shape mismatch", func() {
+		backend.RMSNorm(t1, weight)
+	})
 }

@@ -139,8 +139,12 @@ func Test3D(t *testing.T) {
 // TestAtPanicIndexCount 验证 At 在索引数量不匹配时 panic。
 func TestAtPanicIndexCount(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for mismatched index count")
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		if msg := r.(string); !strings.HasPrefix(msg, "tensor.At: index count") {
+			t.Errorf("wrong panic: %s", msg)
 		}
 	}()
 	t1 := New(2, 3)
@@ -150,8 +154,12 @@ func TestAtPanicIndexCount(t *testing.T) {
 // TestAtPanicIndexOutOfRange 验证 At 在索引越界时 panic。
 func TestAtPanicIndexOutOfRange(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for out-of-range index")
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		if msg := r.(string); !strings.HasPrefix(msg, "tensor.At: index out of range") {
+			t.Errorf("wrong panic: %s", msg)
 		}
 	}()
 	t1 := New(2, 3)
@@ -161,8 +169,12 @@ func TestAtPanicIndexOutOfRange(t *testing.T) {
 // TestSetPanicIndexCount 验证 Set 在索引数量不匹配时 panic。
 func TestSetPanicIndexCount(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for mismatched index count")
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		if msg := r.(string); !strings.HasPrefix(msg, "tensor.Set: index count") {
+			t.Errorf("wrong panic: %s", msg)
 		}
 	}()
 	t1 := New(2, 3)
@@ -174,14 +186,10 @@ func TestViewPanic(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected panic for shape mismatch")
+			t.Fatal("expected panic")
 		}
-		msg, ok := r.(string)
-		if !ok {
-			t.Fatal("panic value should be a string")
-		}
-		// 验证 panic 信息包含期望和实际的元素数
-		if !contains(msg, "6") || !contains(msg, "8") {
+		msg := r.(string)
+		if !strings.Contains(msg, "6") || !strings.Contains(msg, "8") {
 			t.Errorf("panic message should mention element counts, got: %s", msg)
 		}
 	}()
@@ -192,8 +200,13 @@ func TestViewPanic(t *testing.T) {
 // TestNewWithDataPanic 验证 NewWithData 在 data 长度不匹配时 panic。
 func TestNewWithDataPanic(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for data length mismatch")
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		msg := r.(string)
+		if !strings.HasPrefix(msg, "tensor.NewWithData") {
+			t.Errorf("wrong panic: %s", msg)
 		}
 	}()
 	NewWithData([]float32{1, 2, 3}, 2, 3) // 3 elements ≠ 2×3=6 → panic
@@ -224,9 +237,4 @@ func TestScalar(t *testing.T) {
 	if t1.At() != 42 {
 		t.Errorf("At() on scalar = %f, want 42", t1.At())
 	}
-}
-
-// 辅助函数：字符串包含检查
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
 }
