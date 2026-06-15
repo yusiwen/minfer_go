@@ -1,6 +1,7 @@
 package tensor
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -209,16 +210,23 @@ func TestSizeOutOfRange(t *testing.T) {
 	}
 }
 
-// 辅助函数：字符串包含检查
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && containsStr(s, substr)
+// TestScalar 验证 0 维标量张量的创建和访问。
+func TestScalar(t *testing.T) {
+	t1 := New() // 无参数→标量
+	if t1.Dims() != 0 {
+		t.Errorf("scalar tensor should have 0 dims, got %d", t1.Dims())
+	}
+	if t1.NumElements() != 1 {
+		t.Errorf("scalar tensor should have 1 element, got %d", t1.NumElements())
+	}
+	// 标量的 At（无索引）应该返回唯一元素
+	t1.Data[0] = 42
+	if t1.At() != 42 {
+		t.Errorf("At() on scalar = %f, want 42", t1.At())
+	}
 }
 
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+// 辅助函数：字符串包含检查
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

@@ -34,7 +34,10 @@ func TestMatMul(t *testing.T) {
 		11, 12,
 	}, 3, 2)
 
-	c := backend.MatMul(a, b)
+	c, err := backend.MatMul(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	expected := []float32{58, 64, 139, 154}
 	for i, v := range expected {
@@ -51,7 +54,10 @@ func TestMatMul1x4x4(t *testing.T) {
 	a := tensor.NewWithData([]float32{1, 2, 3, 4}, 1, 4)
 	b := tensor.NewWithData([]float32{5, 6, 7, 8}, 4, 1)
 
-	c := backend.MatMul(a, b)
+	c, err := backend.MatMul(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	expected := float32(1*5 + 2*6 + 3*7 + 4*8) // 70
 	if c.Data[0] != expected {
 		t.Errorf("dot product = %f, want %f", c.Data[0], expected)
@@ -90,7 +96,10 @@ func TestAdd(t *testing.T) {
 	a := tensor.NewWithData([]float32{1, 2, 3}, 3)
 	b := tensor.NewWithData([]float32{4, 5, 6}, 3)
 
-	c := backend.Add(a, b)
+	c, err := backend.Add(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	expected := []float32{5, 7, 9}
 	for i, v := range expected {
 		if c.Data[i] != v {
@@ -464,4 +473,64 @@ func TestRoPEPanicDimMismatch(t *testing.T) {
 		}
 	}()
 	backend.RoPE(q, k, 0, 8) // dim=8 ≠ q.Shape[2]=4 → panic
+}
+
+// TestRoPEPanicHeadsMismatch 验证 RoPE 在 q/k 的 num_heads 不同时 panic。
+func TestRoPEPanicHeadsMismatch(t *testing.T) {
+	backend := New()
+
+	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
+	k := tensor.NewWithData([]float32{3, 3, 3, 3}, 1, 1, 4) // 1 head vs 2 heads
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for num_heads mismatch")
+		}
+	}()
+	backend.RoPE(q, k, 0, 4)
+}
+
+// TestRoPEPanicOddDim 验证 RoPE 在 head_dim 为奇数时 panic。
+func TestRoPEPanicOddDim(t *testing.T) {
+	backend := New()
+
+	q := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 6)
+	k := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 6)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for odd head_dim")
+		}
+	}()
+	backend.RoPE(q, k, 0, 7) // dim=7 is odd → panic
+}
+
+// TestRMSNormPanicWeightDim 验证 RMSNorm 在 weight 维度不匹配时 panic。
+func TestRMSNormPanicWeightDim(t *testing.T) {
+	backend := New()
+
+	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
+	weight := tensor.NewWithData([]float32{1, 1}, 2) // hidden_dim=4, weight has 2
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for weight dim mismatch")
+		}
+	}()
+	backend.RMSNorm(t1, weight)
+}
+
+// TestRMSNormPanicWeightNot1D 验证 RMSNorm 在 weight 不是1D时 panic。
+func TestRMSNormPanicWeightNot1D(t *testing.T) {
+	backend := New()
+
+	t1 := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
+	weight := tensor.NewWithData([]float32{1, 1, 1, 1}, 2, 2) // 2D weight
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for 2D weight")
+		}
+	}()
+	backend.RMSNorm(t1, weight)
 }

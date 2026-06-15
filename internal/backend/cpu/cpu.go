@@ -67,7 +67,7 @@ func New() *CPUBackend {
 // 为什么先写 ijk：
 //   最直观，最容易和数学公式对应。
 //   先跑通、验证正确，再优化。
-func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) *tensor.Tensor {
+func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	// 形状检查
 	if a.Dims() != 2 || bTensor.Dims() != 2 {
 		panic("cpu.MatMul: inputs must be 2D tensors")
@@ -99,7 +99,7 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) *tensor.Tensor {
 		}
 	}
 
-	return c
+	return c, nil
 }
 
 // Softmax 在最后一个维度上计算 Softmax（原地修改）。
@@ -194,6 +194,15 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 	n := t.Shape[t.Dims()-1]
 	rows := t.NumElements() / n
 
+	// weight 必须是一维向量，长度等于 hidden_dim
+	if weight.Dims() != 1 || weight.NumElements() != n {
+		panic(fmt.Sprintf(
+			"cpu.RMSNorm: weight shape mismatch: got (%d,) but input has hidden_dim %d",
+			weight.NumElements(), n,
+		))
+	}
+
+	// TODO: 从 model.Config 中读取 epsilon，当前硬编码
 	const epsilon = 1e-6 // 防除零
 
 	for r := 0; r < rows; r++ {
@@ -258,8 +267,6 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 //   pos: 当前 token 在序列中的位置
 //   dim: head_dim（如 64 或 128）
 func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
-	// base 和 Transformer 原版一样
-	const base = 10000.0
 
 	// 形状检查：q 和 k 必须是 3 维 [1, num_heads, dim]
 	if q.Dims() != 3 || k.Dims() != 3 {
@@ -271,8 +278,22 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 			q.Shape[2], k.Shape[2], dim,
 		))
 	}
+	if q.Shape[1] != k.Shape[1] {
+		panic(fmt.Sprintf(
+			"cpu.RoPE: num_heads mismatch: q has %d, k has %d",
+			q.Shape[1], k.Shape[1],
+		))
+	}
+	if dim%2 != 0 {
+		panic(fmt.Sprintf(
+			"cpu.RoPE: head_dim must be even, got %d",
+			dim,
+		))
+	}
 
-	// 对所有 head 和所有维度对应用 RoPE
+	// TODO: 从 model.Config 中读取 base，当前硬编码
+	const base = 10000.0
+
 	numHeads := q.Shape[1]
 	headDim := dim
 
@@ -352,7 +373,7 @@ func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 //   如果没有残差连接，深层网络容易出现"梯度消失"问题——
 //   梯度经过多层反向传播后趋近于 0，浅层权重几乎得不到更新。
 //   残差连接让梯度有一条"高速公路"直达浅层。
-func (b *CPUBackend) Add(a, bTensor *tensor.Tensor) *tensor.Tensor {
+func (b *CPUBackend) Add(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	if len(a.Shape) != len(bTensor.Shape) {
 		panic("cpu.Add: tensors have different number of dimensions")
 	}
@@ -365,5 +386,5 @@ func (b *CPUBackend) Add(a, bTensor *tensor.Tensor) *tensor.Tensor {
 	for i := range a.Data {
 		c.Data[i] = a.Data[i] + bTensor.Data[i]
 	}
-	return c
+	return c, nil
 }

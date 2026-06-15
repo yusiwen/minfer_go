@@ -60,7 +60,6 @@ architecture, KV cache, and sampling.`,
 		},
 	}
 	runCmd.Flags().StringP("model", "m", "", "Path to GGUF model file")
-	runCmd.Flags().StringP("backend", "b", "cpu", "Compute backend (cpu, cuda, metal)")
 	rootCmd.AddCommand(runCmd)
 
 	// pull 子命令（占位，后续实现）

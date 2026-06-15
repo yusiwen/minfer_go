@@ -49,7 +49,8 @@ type Backend interface {
 	//   - FFN: gate = x × W_gate, up = x × W_up, down = gate*up × W_down
 	//
 	// 从零实现的角度，这是第一个值得花时间优化的地方。
-	MatMul(a, b *tensor.Tensor) *tensor.Tensor
+	// CPUBackend 永远返回 nil error；GPU 后端可能因设备错误返回非 nil。
+	MatMul(a, b *tensor.Tensor) (*tensor.Tensor, error)
 
 	// Softmax 在最后一个维度上计算 Softmax（原地修改）。
 	//
@@ -63,6 +64,9 @@ type Backend interface {
 	//
 	// 在注意力计算中：scores = Softmax(Q × K^T / √d_k)
 	// 这步之后，scores 的每一行都变成概率分布（和为 1，每个值在 0~1 之间）。
+	//
+	// 注意：该实现永远返回 nil，保留 error 返回值是为了与 compute.Backend
+	// 接口一致。未来 GPU 后端可能因为设备错误返回非 nil error。
 	Softmax(t *tensor.Tensor) error
 
 	// RMSNorm 执行 RMS 归一化（Root Mean Square Normalization）。
@@ -138,5 +142,7 @@ type Backend interface {
 	// 在 Transformer 中用于残差连接（Residual Connection）：
 	//   output = Layer(x) + x
 	// 残差连接让梯度能直接流过深层网络，是训练深度模型的关键。
-	Add(a, b *tensor.Tensor) *tensor.Tensor
+	//
+	// CPUBackend 永远返回 nil error；GPU 后端可能因设备错误返回非 nil。
+	Add(a, b *tensor.Tensor) (*tensor.Tensor, error)
 }
