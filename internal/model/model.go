@@ -378,3 +378,16 @@ func transposeEmbedding(emb *tensor.Tensor, vocabSize, hiddenDim int) *tensor.Te
 	}
 	return tensor.NewWithData(data, hiddenDim, vocabSize)
 }
+
+// ForwardAdapter wraps Model.Forward to return []float32 instead of *tensor.Tensor,
+// making it compatible with the infer.ModelForwarder interface.
+// The returned slice is a copy of the logits tensor data [1, vocab_size].
+func ForwardAdapter(m *Model, tokens []int, startPos int) ([]float32, error) {
+	logits, err := m.Forward(tokens, startPos)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]float32, len(logits.Data))
+	copy(result, logits.Data)
+	return result, nil
+}
