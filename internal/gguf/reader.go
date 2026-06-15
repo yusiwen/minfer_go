@@ -97,8 +97,9 @@ func (t GGMLType) TypeSize() int {
 	case TypeQ4_1:
 		return 2 + 2 + 16 // f16 scale + f16 min + 16 bytes nibbles
 	case TypeQ5_0:
-		return 2 + 4 + 16 // f16 scale + 4 bytes high bits + 16 bytes low nibbles (wait, let me re-check)
-		// Actually for Q5_0: 1 block = 32 elements, 2 bytes (scale) + 4 bytes (high 5th bits) + 16 bytes (low 4 bits)
+		return 2 + 4 + 16 // f16 scale + 4 bytes (32 high bits) + 16 bytes (32 low nibbles)
+	case TypeQ5_1:
+		return 2 + 2 + 4 + 16 // f16 scale + f16 min + 4 bytes (32 high bits) + 16 bytes (32 low nibbles)
 	case TypeQ8_0:
 		return 2 + 32 // f16 scale + 32 × int8
 	case TypeQ8_1:
@@ -652,6 +653,13 @@ func alignOffset(offset, alignment uint64) uint64 {
 //
 // float16 format: 1 sign bit, 5 exponent bits, 10 mantissa bits
 // float32 format: 1 sign bit, 8 exponent bits, 23 mantissa bits
+//
+// Subnormal handling uses modular arithmetic:
+// The loop decrements exp (uint32) for each normalization shift.
+// Starting from exp=0, after k shifts exp wraps to 2^32 - k,
+// and (2^32 - k + 113) wraps back to (113 - k), which equals
+// the correct f32 exponent (-14 - k + 127) = (113 - k).
+// This is well-defined in Go: unsigned integer overflow wraps around.
 func f16ToF32(v uint16) float32 {
 	// Extract components
 	sign := uint32(v>>15) & 1
