@@ -14,6 +14,8 @@
 // 这样设计的目的是为将来添加 GPU 后端时，Tensor 本身不需要改动。
 package tensor
 
+import "fmt"
+
 // Tensor 是多维数组的数据结构。
 //
 // Data 按行优先（row-major）顺序存储在一维切片中。
@@ -102,9 +104,19 @@ func (t *Tensor) NumElements() int {
 //
 // 计算偏移量的公式：
 //   offset = Σ(i_n × stride_n)，其中 stride 是各维度的跨度
+//
+// Panic 条件：
+//   - 索引数量不等于维度数（len(indices) != len(t.Shape)）
+//   - 某个索引超出对应维度范围
 func (t *Tensor) At(indices ...int) float32 {
+	if len(indices) != len(t.Shape) {
+		panic("tensor.At: index count does not match tensor dimensions")
+	}
 	offset := 0
 	for i, idx := range indices {
+		if idx < 0 || idx >= t.Shape[i] {
+			panic("tensor.At: index out of range")
+		}
 		// stride = 当前维度之后所有维度的乘积
 		stride := 1
 		for j := i + 1; j < len(t.Shape); j++ {
@@ -117,9 +129,17 @@ func (t *Tensor) At(indices ...int) float32 {
 
 // Set 设置指定索引位置的元素值。
 // 用法同 At，只是写入而不是读取。
+//
+// Panic 条件同 At。
 func (t *Tensor) Set(val float32, indices ...int) {
+	if len(indices) != len(t.Shape) {
+		panic("tensor.Set: index count does not match tensor dimensions")
+	}
 	offset := 0
 	for i, idx := range indices {
+		if idx < 0 || idx >= t.Shape[i] {
+			panic("tensor.Set: index out of range")
+		}
 		stride := 1
 		for j := i + 1; j < len(t.Shape); j++ {
 			stride *= t.Shape[j]
@@ -139,13 +159,19 @@ func (t *Tensor) Set(val float32, indices ...int) {
 //   x: [seq_len, hidden_dim]
 //   需要 reshape 为 [seq_len, num_heads, head_dim] 以便按头计算
 //   用 View 可以零成本做到。
+//
+// Panic 条件：新形状的元素总数不等于当前元素总数。
 func (t *Tensor) View(shape ...int) *Tensor {
-	size := 1
+	newSize := 1
 	for _, d := range shape {
-		size *= d
+		newSize *= d
 	}
-	if size != len(t.Data) {
-		panic("tensor.View: new shape does not match element count")
+	oldSize := len(t.Data)
+	if newSize != oldSize {
+		panic(fmt.Sprintf(
+			"tensor.View: new shape has %d elements, but tensor has %d elements",
+			newSize, oldSize,
+		))
 	}
 	return &Tensor{
 		Data:  t.Data,

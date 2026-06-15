@@ -44,15 +44,15 @@ clean:
 
 linux-amd64:
 	@mkdir -p $(BINDIR)
-	GOARCH=amd64 GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
+	GOARCH=amd64 GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@ ./cmd/$(NAME)
 
 linux-arm64:
 	@mkdir -p $(BINDIR)
-	GOARCH=arm64 GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
+	GOARCH=arm64 GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@ ./cmd/$(NAME)
 
 darwin-arm64:
 	@mkdir -p $(BINDIR)
-	GOARCH=arm64 GOOS=darwin $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
+	GOARCH=arm64 GOOS=darwin $(GOBUILD) -o $(BINDIR)/$(NAME)-$@ ./cmd/$(NAME)
 
 all: $(PLATFORM_LIST)
 	@echo "Built all platforms: $(PLATFORM_LIST)"

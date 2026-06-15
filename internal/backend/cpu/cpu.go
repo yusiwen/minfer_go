@@ -21,6 +21,7 @@
 package cpu
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/yusiwen/minfer/internal/tensor"
@@ -68,9 +69,17 @@ func New() *CPUBackend {
 //   先跑通、验证正确，再优化。
 func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) *tensor.Tensor {
 	// 形状检查
-	// a: [M, K], b: [K, N]
+	if a.Dims() != 2 || bTensor.Dims() != 2 {
+		panic("cpu.MatMul: inputs must be 2D tensors")
+	}
 	M := a.Shape[0]
 	K := a.Shape[1]
+	if bTensor.Shape[0] != K {
+		panic(fmt.Sprintf(
+			"cpu.MatMul: shape mismatch: A[%d,%d] cannot multiply B[%d,%d] (inner dims %d != %d)",
+			M, K, bTensor.Shape[0], bTensor.Shape[1], K, bTensor.Shape[0],
+		))
+	}
 	N := bTensor.Shape[1]
 
 	// 创建输出张量 C: [M, N]（初始值为 0）
@@ -118,6 +127,9 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) *tensor.Tensor {
 //   scores = Softmax(Q × K^T / √d_k)
 //   这步之后，scores 的每一行变成一个概率分布，
 //   告诉模型"当前位置应该关注序列中的哪些位置"。
+//
+// 注意：该实现永远返回 nil，保留 error 返回值是为了与 compute.Backend
+// 接口一致。未来 GPU 后端可能因为设备错误返回非 nil error。
 func (b *CPUBackend) Softmax(t *tensor.Tensor) error {
 	// 获取最后一个维度的大小
 	// 对于形状 [M, N] 的矩阵，lastDim = N
@@ -168,7 +180,7 @@ func (b *CPUBackend) Softmax(t *tensor.Tensor) error {
 //   y = (x - μ) / σ × γ + β
 //   其中 μ = mean(x), σ = sqrt(var(x) + ε)
 //
-// RMSNorm 公式（去掉了均值 μ 的计）：
+// RMSNorm 公式（去掉了均值 μ 的计算）：
 //   y = x / RMS(x) × γ
 //   其中 RMS(x) = sqrt( (1/N) × Σ(x_j²) + ε )
 //
@@ -249,10 +261,20 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 	// base 和 Transformer 原版一样
 	const base = 10000.0
 
+	// 形状检查：q 和 k 必须是 3 维 [1, num_heads, dim]
+	if q.Dims() != 3 || k.Dims() != 3 {
+		panic("cpu.RoPE: q and k must be 3D tensors [1, num_heads, head_dim]")
+	}
+	if q.Shape[2] != dim || k.Shape[2] != dim {
+		panic(fmt.Sprintf(
+			"cpu.RoPE: head_dim mismatch: q has %d, k has %d, expected %d",
+			q.Shape[2], k.Shape[2], dim,
+		))
+	}
+
 	// 对所有 head 和所有维度对应用 RoPE
-	// q.Data 布局: [1, num_heads, head_dim] → 扁平为 [num_heads * head_dim]
 	numHeads := q.Shape[1]
-	headDim := q.Shape[2]
+	headDim := dim
 
 	for h := 0; h < numHeads; h++ {
 		for i := 0; i < headDim; i += 2 {
@@ -307,6 +329,9 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 //
 // 门控机制让 FFN 可以"决定"哪些信息通过、哪些被抑制。
 // 这是 SwiGLU 比标准 ReLU FFN 效果更好的原因。
+//
+// 注意：该实现永远返回 nil，保留 error 返回值是为了与 compute.Backend
+// 接口一致。未来 GPU 后端可能因为设备错误返回非 nil error。
 func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 	for i := range t.Data {
 		// sigmoid(x) = 1 / (1 + exp(-x))
@@ -317,6 +342,9 @@ func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 
 // Add 执行逐元素加法：c = a + b
 //
+// a 和 b 必须有相同形状。
+// Panic 条件：a 和 b 形状不同。
+//
 // 在 Transformer 中用于残差连接（Residual Connection）：
 //   output = sub_layer(output) + output
 //
@@ -324,9 +352,15 @@ func (b *CPUBackend) Silu(t *tensor.Tensor) error {
 //   如果没有残差连接，深层网络容易出现"梯度消失"问题——
 //   梯度经过多层反向传播后趋近于 0，浅层权重几乎得不到更新。
 //   残差连接让梯度有一条"高速公路"直达浅层。
-//
-// a 和 b 必须形状相同（或者可以广播，当前简化版本不考虑广播）。
 func (b *CPUBackend) Add(a, bTensor *tensor.Tensor) *tensor.Tensor {
+	if len(a.Shape) != len(bTensor.Shape) {
+		panic("cpu.Add: tensors have different number of dimensions")
+	}
+	for i := range a.Shape {
+		if a.Shape[i] != bTensor.Shape[i] {
+			panic("cpu.Add: tensors have different shapes")
+		}
+	}
 	c := tensor.New(a.Shape...)
 	for i := range a.Data {
 		c.Data[i] = a.Data[i] + bTensor.Data[i]

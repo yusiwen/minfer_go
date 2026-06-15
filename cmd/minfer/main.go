@@ -5,9 +5,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"github.com/yusiwen/minfer/internal/backend/cpu"
-	"github.com/yusiwen/minfer/internal/tensor"
 )
 
 // Version 信息，通过 ldflags 在构建时注入
@@ -46,40 +43,20 @@ architecture, KV cache, and sampling.`,
 		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			modelPath, _ := cmd.Flags().GetString("model")
-			backendName, _ := cmd.Flags().GetString("backend")
 
 			if modelPath == "" && len(args) > 0 {
 				modelPath = args[0]
 			}
-
-			fmt.Printf("🔧 Minfer %s\n", Version)
-			fmt.Printf("   Model:   %s\n", modelPath)
-			fmt.Printf("   Backend: %s\n", backendName)
 
 			if modelPath == "" {
 				fmt.Println("❌ No model specified. Use --model or pass as argument.")
 				return
 			}
 
-			// ---- Phase 1 test: verify CPUBackend works ----
-			b := cpu.New()
-
-			// 做一个最简单的 2×3 × 3×2 = 2×2 矩阵乘法来验证
-			a := tensor.NewWithData([]float32{
-				1, 2, 3,
-				4, 5, 6,
-			}, 2, 3)
-			bTensor := tensor.NewWithData([]float32{
-				7, 8,
-				9, 10,
-				11, 12,
-			}, 3, 2)
-
-			c := b.MatMul(a, bTensor)
-			fmt.Printf("\n✅ MatMul test passed!\n")
-			fmt.Printf("   A[2×3] × B[3×2] = C[2×2]:\n")
-			fmt.Printf("   ⎡%.0f  %.0f⎤\n", c.Data[0], c.Data[1])
-			fmt.Printf("   ⎣%.0f  %.0f⎦\n", c.Data[2], c.Data[3])
+			fmt.Printf("🔧 Minfer %s\n", Version)
+			fmt.Printf("   Model:   %s\n", modelPath)
+			fmt.Printf("\n⚠️  Model inference not yet implemented — coming in Phase 4-5.\n")
+			fmt.Printf("   Phase 1 (Tensor + CPU backend) is verified via 'go test ./...'.\n")
 		},
 	}
 	runCmd.Flags().StringP("model", "m", "", "Path to GGUF model file")

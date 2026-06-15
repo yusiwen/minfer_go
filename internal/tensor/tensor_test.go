@@ -104,3 +104,121 @@ func Test1D(t *testing.T) {
 		t.Fatalf("1D tensor: got shape %v, elems %d", t1.Shape, t1.NumElements())
 	}
 }
+
+// Test3D 验证 3 维张量的多维索引访问。
+//
+// 形状 [2, 2, 3] → 2 个矩阵，每个 2×3。
+// 行优先存储：
+//   (0,0,0)=0, (0,0,1)=1, (0,0,2)=2, (0,1,0)=3, (0,1,1)=4, (0,1,2)=5
+//   (1,0,0)=6, (1,0,1)=7, (1,0,2)=8, (1,1,0)=9, (1,1,1)=10, (1,1,2)=11
+func Test3D(t *testing.T) {
+	data := make([]float32, 12)
+	for i := range data {
+		data[i] = float32(i)
+	}
+	t1 := NewWithData(data, 2, 2, 3)
+
+	tests := []struct {
+		i, j, k int
+		want    float32
+	}{
+		{0, 0, 0, 0}, {0, 0, 1, 1}, {0, 0, 2, 2},
+		{0, 1, 0, 3}, {0, 1, 1, 4}, {0, 1, 2, 5},
+		{1, 0, 0, 6}, {1, 0, 1, 7}, {1, 0, 2, 8},
+		{1, 1, 0, 9}, {1, 1, 1, 10}, {1, 1, 2, 11},
+	}
+	for _, tt := range tests {
+		got := t1.At(tt.i, tt.j, tt.k)
+		if got != tt.want {
+			t.Errorf("At(%d,%d,%d) = %f, want %f", tt.i, tt.j, tt.k, got, tt.want)
+		}
+	}
+}
+
+// TestAtPanicIndexCount 验证 At 在索引数量不匹配时 panic。
+func TestAtPanicIndexCount(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for mismatched index count")
+		}
+	}()
+	t1 := New(2, 3)
+	t1.At(0) // 2D tensor needs 2 indices, only 1 given → panic
+}
+
+// TestAtPanicIndexOutOfRange 验证 At 在索引越界时 panic。
+func TestAtPanicIndexOutOfRange(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for out-of-range index")
+		}
+	}()
+	t1 := New(2, 3)
+	t1.At(5, 0) // row 5 is out of range for shape [2,3] → panic
+}
+
+// TestSetPanicIndexCount 验证 Set 在索引数量不匹配时 panic。
+func TestSetPanicIndexCount(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for mismatched index count")
+		}
+	}()
+	t1 := New(2, 3)
+	t1.Set(42, 0, 0, 0) // 2D tensor needs 2 indices, 3 given → panic
+}
+
+// TestViewPanic 验证 View 在形状不匹配时 panic 且有明确信息。
+func TestViewPanic(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for shape mismatch")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatal("panic value should be a string")
+		}
+		// 验证 panic 信息包含期望和实际的元素数
+		if !contains(msg, "6") || !contains(msg, "8") {
+			t.Errorf("panic message should mention element counts, got: %s", msg)
+		}
+	}()
+	t1 := NewWithData([]float32{1, 2, 3, 4, 5, 6}, 2, 3)
+	t1.View(4, 2) // 4×2=8 ≠ 6 → panic
+}
+
+// TestNewWithDataPanic 验证 NewWithData 在 data 长度不匹配时 panic。
+func TestNewWithDataPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for data length mismatch")
+		}
+	}()
+	NewWithData([]float32{1, 2, 3}, 2, 3) // 3 elements ≠ 2×3=6 → panic
+}
+
+// TestSizeOutOfRange 验证 Size 对越界索引返回 1。
+func TestSizeOutOfRange(t *testing.T) {
+	t1 := New(2, 3)
+	if t1.Size(-1) != 1 {
+		t.Errorf("Size(-1) should return 1 for out-of-range")
+	}
+	if t1.Size(5) != 1 {
+		t.Errorf("Size(5) should return 1 for out-of-range")
+	}
+}
+
+// 辅助函数：字符串包含检查
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && containsStr(s, substr)
+}
+
+func containsStr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
