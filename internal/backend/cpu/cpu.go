@@ -29,6 +29,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/yusiwen/minfer/internal/backend/cpu/cgoq4"
 	"github.com/yusiwen/minfer/internal/compute"
 	"github.com/yusiwen/minfer/internal/tensor"
 )
@@ -143,31 +144,36 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 			go func(colStart, colEnd int) {
 				defer wg.Done()
 
-				// Stack buffer for one Q4 block dequant (32 float32 = 128 bytes)
-				var blockBuf [32]float32
+				blkPerRow := N / 32 // Q4_0 blocks per row of B
 
 				for i := 0; i < M; i++ {
 					cRow := c.Data[i*N:]
 					aRow := a.Data[i*K:]
 
+					// Try CGo fused Q4+AVX2 kernel for this row and column range
+					if cgoq4.MatmulQ4Row(
+						unsafe.Pointer(&aRow[0]),
+						unsafe.Pointer(&q4[0]),
+						unsafe.Pointer(&cRow[0]),
+						K, N, colStart, colEnd, blkPerRow,
+					) {
+						continue // CGo kernel handled this row
+					}
+
+					// Go scalar fallback: dequantize block by block
+					var blockBuf [32]float32
 					for k := 0; k < K; k++ {
 						aVal := aRow[k]
-
-						// Process columns in Q4 block-sized chunks (32 values each)
-						// For each block, dequantize to L1 cache buffer, then do AVX2 FMA
 						col := colStart
 						for col < colEnd {
-							// How many columns to process in this chunk (at most 32)
 							chunkEnd := col + 32
 							if chunkEnd > colEnd {
 								chunkEnd = colEnd
 							}
-							if chunkEnd <= col {
-								break
-							}
-
-							// Dequantize this chunk from Q4 blocks
 							chunkLen := chunkEnd - col
+							if chunkLen <= 0 { break }
+
+							// Dequantize one Q4 block to stack buffer
 							for j := 0; j < chunkLen; j++ {
 								absCol := col + j
 								idx := k*N + absCol
@@ -185,22 +191,10 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 								blockBuf[j] = (float32(n) - 8.0) * scale
 							}
 
-							// Now FMA: cRow[col:chunkEnd] += aVal * blockBuf[0:chunkEnd]
-							// Use AVX2 for the FMA part if available
-							if M == 1 && chunkLen >= 8 && TryMatmulAVX2(
-								unsafe.Pointer(&aVal),
-								unsafe.Pointer(&blockBuf[0]),
-								unsafe.Pointer(&cRow[col]),
-								1, chunkLen, 0, chunkLen,
-							) {
-								// AVX2 handled it
-							} else {
-								// Scalar fallback
-								for j := 0; j < chunkLen; j++ {
-									cRow[col+j] += aVal * blockBuf[j]
-								}
+							// Scalar FMA
+							for j := 0; j < chunkLen; j++ {
+								cRow[col+j] += aVal * blockBuf[j]
 							}
-
 							col = chunkEnd
 						}
 					}

@@ -3,7 +3,7 @@ BINDIR=bin
 VERSION=$(shell /usr/bin/git --no-pager describe --tags 2>/dev/null || echo "dev")
 COMMIT_SHA=$(shell /usr/bin/git --no-pager rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILDTIME=$(shell date -u)
-GOBUILD=CGO_ENABLED=0 go build -trimpath -ldflags '-X "main.Version=$(VERSION)" \
+GOBUILD=go build -trimpath -ldflags '-X "main.Version=$(VERSION)" \
 		-X "main.CommitSHA=$(COMMIT_SHA)" \
 		-X "main.BuildTime=$(BUILDTIME)" \
 		-w -s -buildid='
