@@ -155,7 +155,7 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 						unsafe.Pointer(&aRow[0]),
 						unsafe.Pointer(&q4[0]),
 						unsafe.Pointer(&cRow[0]),
-						K, N, colStart, colEnd, blkPerRow,
+						K, N, colStart, colEnd, blkPerRow, 2, // 2 = Q4_0
 					) {
 						continue // CGo kernel handled this row
 					}

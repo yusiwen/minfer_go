@@ -97,11 +97,12 @@ func LoadModel(wp WeightProvider, cfg Config, backend compute.Backend) (*Model, 
 	ffnHd := cfg.FFNHiddenDim
 
 	// loadWeightQ4 loads a weight tensor.
-	// For Q4_0 tensors: only stores Q4 blocks (no float32 Data).
+	// For Q4_0 (type 2) tensors: only stores Q4 blocks (no float32 Data).
+	// For Q8_0 (type 8) tensors: same — Q8 blocks only.
 	// For F32/F16 tensors (norms, small weights): stores normal float32 Data.
 	loadWeightQ4 := func(name string, shape ...int) *tensor.Tensor {
-		// Try raw Q4 blocks first
-		if raw, rawType, err := wp.ReadTensorRaw(name); err == nil && rawType == 2 {
+		// Try raw blocks first (Q4_0 or Q8_0)
+		if raw, rawType, err := wp.ReadTensorRaw(name); err == nil && (rawType == 2 || rawType == 8) {
 			t := tensor.New(shape...)
 			t.Q4Blocks = raw
 			return t
