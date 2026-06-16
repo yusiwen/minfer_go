@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -119,6 +120,15 @@ Examples:
 				os.Exit(1)
 			}
 			fmt.Printf("   ✅ Tokenizer ready (vocab: %d)\n", tok.VocabSize())
+
+			// AVX2 detection
+			cpuName := "CPU (pure Go)"
+			if runtime.GOARCH == "amd64" {
+				if cpu.HasAVX2() {
+					cpuName = fmt.Sprintf("CPU (AVX2+FMA, %d cores)", runtime.NumCPU())
+				}
+			}
+			fmt.Printf("   Backend:  %s\n", cpuName)
 
 			// Step 5: Run inference
 			fmt.Printf("\n🤖 Generating...\n")
