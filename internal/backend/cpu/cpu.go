@@ -27,6 +27,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"unsafe"
 
 	"github.com/yusiwen/minfer/internal/compute"
 	"github.com/yusiwen/minfer/internal/tensor"
@@ -185,6 +186,20 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 
 		go func(colStart, colEnd int) {
 			defer wg.Done()
+
+			// AVX2 fast path (decode step: M=1)
+			if M == 1 {
+				if TryMatmulAVX2(
+					unsafe.Pointer(&a.Data[0]),
+					unsafe.Pointer(&bTensor.Data[0]),
+					unsafe.Pointer(&c.Data[0]),
+					K, N, colStart, colEnd,
+				) {
+					return // AVX2 handled it
+				}
+			}
+
+			// Pure Go fallback (ikj order)
 			for i := 0; i < M; i++ {
 				cRow := c.Data[i*N:]
 				aRow := a.Data[i*K:]
