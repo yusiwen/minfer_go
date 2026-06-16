@@ -25,6 +25,8 @@ package cpu
 import (
 	"fmt"
 	"math"
+	"runtime"
+	"sync"
 
 	"github.com/yusiwen/minfer/internal/compute"
 	"github.com/yusiwen/minfer/internal/tensor"
@@ -87,22 +89,46 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 	}
 	N := bTensor.Shape[1]
 
-	// Allocate output tensor C: [M, N] (zero-initialized)
+	// Allocate output tensor C: [M, N]
 	c := tensor.New(M, N)
-
-	// Triple loop: naive ijk
-	for i := 0; i < M; i++ {
-		for j := 0; j < N; j++ {
-			var sum float32
-			for k := 0; k < K; k++ {
-				// Row-major offset calculation:
-				//   a[i][k] → offset = i*K + k
-				//   b[k][j] → offset = k*N + j
-				sum += a.Data[i*K+k] * bTensor.Data[k*N+j]
-			}
-			c.Data[i*N+j] = sum
-		}
+	numWorkers := runtime.NumCPU()
+	if numWorkers > N {
+		numWorkers = N
 	}
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+
+	// Parallel: split the N dimension (columns of output) across workers.
+	// Each worker computes C[:, start:end] for its column range.
+	// This is effective even when M=1 (decode step).
+	colsPerWorker := N / numWorkers
+	var wg sync.WaitGroup
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		start := w * colsPerWorker
+		end := start + colsPerWorker
+		if w == numWorkers-1 {
+			end = N // last worker gets the remainder
+		}
+
+		go func(colStart, colEnd int) {
+			defer wg.Done()
+			for i := 0; i < M; i++ {
+				aRow := a.Data[i*K:]
+				cRow := c.Data[i*N:]
+				for j := colStart; j < colEnd; j++ {
+					var sum float32
+					for k := 0; k < K; k++ {
+						sum += aRow[k] * bTensor.Data[k*N+j]
+					}
+					cRow[j] = sum
+				}
+			}
+		}(start, end)
+	}
+	wg.Wait()
 
 	return c, nil
 }

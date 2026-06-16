@@ -13,6 +13,8 @@ package model
 import (
 	"fmt"
 	"math"
+	"runtime"
+	"sync"
 
 	"github.com/yusiwen/minfer/internal/compute"
 	"github.com/yusiwen/minfer/internal/tensor"
@@ -279,61 +281,81 @@ func (m *Model) attention(x *tensor.Tensor, lw LayerWeights, kv *KVCache, startP
 	kv.K = newK
 	kv.V = newV
 
-	// Per-head attention
+	// Per-head attention — parallelized across CPU cores
 	output := tensor.New(seqLen, cfg.NumHeads, headDim)
-
-	for h := 0; h < cfg.NumHeads; h++ {
-		kvH := h
-		if cfg.NumKVHeads < cfg.NumHeads {
-			kvH = h * cfg.NumKVHeads / cfg.NumHeads
-		}
-
-		for qi := 0; qi < seqLen; qi++ {
-			qBase := qi*cfg.NumHeads*headDim + h*headDim
-			maxPos := qi + startPos // causal: can only attend up to current position
-			if maxPos >= cacheLen {
-				maxPos = cacheLen - 1
-			}
-			nScores := maxPos + 1
-
-			// Compute softmax scores
-			scores := make([]float32, nScores)
-			var maxScore float32
-			first := true
-
-			for ki := 0; ki < nScores; ki++ {
-				kBase := ki*cfg.NumKVHeads*headDim + kvH*headDim
-				var s float32
-				for d := 0; d < headDim; d++ {
-					s += q.Data[qBase+d] * kv.K.Data[kBase+d]
-				}
-				s /= float32(math.Sqrt(float64(headDim))) // scale by sqrt(d_k)
-				scores[ki] = s
-				if first || s > maxScore {
-					maxScore = s
-					first = false
-				}
-			}
-
-			// Numerically stable softmax
-			var sum float32
-			for ki := 0; ki < nScores; ki++ {
-				scores[ki] = float32(math.Exp(float64(scores[ki] - maxScore)))
-				sum += scores[ki]
-			}
-
-			// Weighted sum of V
-			dstOff := qi*cfg.NumHeads*headDim + h*headDim
-			for d := 0; d < headDim; d++ {
-				var val float32
-				for ki := 0; ki < nScores; ki++ {
-					vBase := ki*cfg.NumKVHeads*headDim + kvH*headDim
-					val += (scores[ki] / sum) * kv.V.Data[vBase+d]
-				}
-				output.Data[dstOff+d] = val
-			}
-		}
+	numWorkers := runtime.NumCPU()
+	if numWorkers > cfg.NumHeads {
+		numWorkers = cfg.NumHeads
 	}
+	headsPerWorker := cfg.NumHeads / numWorkers
+	var wg sync.WaitGroup
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		hStart := w * headsPerWorker
+		hEnd := hStart + headsPerWorker
+		if w == numWorkers-1 {
+			hEnd = cfg.NumHeads
+		}
+		qData := q.Data
+		kData := kv.K.Data
+		vData := kv.V.Data
+		outData := output.Data
+
+		go func(startH, endH int) {
+			defer wg.Done()
+			for h := startH; h < endH; h++ {
+				kvH := h
+				if cfg.NumKVHeads < cfg.NumHeads {
+					kvH = h * cfg.NumKVHeads / cfg.NumHeads
+				}
+
+				for qi := 0; qi < seqLen; qi++ {
+					qBase := qi*cfg.NumHeads*headDim + h*headDim
+					maxPos := qi + startPos
+					if maxPos >= cacheLen {
+						maxPos = cacheLen - 1
+					}
+					nScores := maxPos + 1
+
+					scores := make([]float32, nScores)
+					var maxScore float32
+					first := true
+
+					for ki := 0; ki < nScores; ki++ {
+						kBase := ki*cfg.NumKVHeads*headDim + kvH*headDim
+						var s float32
+						for d := 0; d < headDim; d++ {
+							s += qData[qBase+d] * kData[kBase+d]
+						}
+						s /= float32(math.Sqrt(float64(headDim)))
+						scores[ki] = s
+						if first || s > maxScore {
+							maxScore = s
+							first = false
+						}
+					}
+
+					var sum float32
+					for ki := 0; ki < nScores; ki++ {
+						scores[ki] = float32(math.Exp(float64(scores[ki] - maxScore)))
+						sum += scores[ki]
+					}
+
+					dstOff := qi*cfg.NumHeads*headDim + h*headDim
+					for d := 0; d < headDim; d++ {
+						var val float32
+						for ki := 0; ki < nScores; ki++ {
+							vBase := ki*cfg.NumKVHeads*headDim + kvH*headDim
+							val += (scores[ki] / sum) * vData[vBase+d]
+						}
+						outData[dstOff+d] = val
+					}
+				}
+			}
+		}(hStart, hEnd)
+	}
+	wg.Wait()
 
 	// Project back to hidden_dim
 	output = output.View(seqLen, cfg.NumHeads*headDim)
