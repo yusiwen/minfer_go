@@ -119,21 +119,20 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 		q4 := bTensor.Q4Blocks
 		const q4BlockSize = 18 // 2 bytes f16 scale + 16 bytes nibbles (32 × 4 bits)
 
-		// Inline f16-to-f32 conversion and Q4_0 dequant.
-		// Must match readQ4_0 in internal/gguf/reader.go exactly.
 		f16ToF32 := func(v uint16) float32 {
 			const magicDiv = float32(1.0 / (1 << 12))
 			sign := uint32(v>>15) & 1
 			exp := uint32(v>>10) & 0x1F
 			mant := uint32(v & 0x3FF)
 			if exp == 0 {
-				return math.Float32frombits((sign << 31) | mant << 13) * magicDiv
+				return math.Float32frombits((sign<<31)|mant<<13) * magicDiv
 			}
 			if exp == 31 {
-				return math.Float32frombits((sign << 31) | 0x7F800000 | mant << 13)
+				return math.Float32frombits((sign<<31)|0x7F800000|mant<<13)
 			}
-			return math.Float32frombits((sign << 31) | ((exp - 15 + 127) << 23) | mant << 13)
+			return math.Float32frombits((sign<<31)|((exp-15+127)<<23)|mant<<13)
 		}
+
 		for w := 0; w < numWorkers; w++ {
 			wg.Add(1)
 			start := w * colsPerWorker
@@ -143,29 +142,66 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 			}
 			go func(colStart, colEnd int) {
 				defer wg.Done()
+
+				// Stack buffer for one Q4 block dequant (32 float32 = 128 bytes)
+				var blockBuf [32]float32
+
 				for i := 0; i < M; i++ {
 					cRow := c.Data[i*N:]
 					aRow := a.Data[i*K:]
+
 					for k := 0; k < K; k++ {
 						aVal := aRow[k]
-						for j := colStart; j < colEnd; j++ {
-							// Dequantize one Q4_0 value
-							idx := k*N + j
-							block := idx / 32
-							inBlock := idx % 32
-							bo := block * q4BlockSize
-							// f16 scale
-							scale := f16ToF32(uint16(q4[bo]) | uint16(q4[bo+1])<<8)
-							// nibble extraction
-							nib := q4[bo+2+inBlock/2]
-							var n int8
-							if inBlock%2 == 0 {
-								n = int8(nib & 0x0F)
-							} else {
-								n = int8(nib >> 4)
+
+						// Process columns in Q4 block-sized chunks (32 values each)
+						// For each block, dequantize to L1 cache buffer, then do AVX2 FMA
+						col := colStart
+						for col < colEnd {
+							// How many columns to process in this chunk (at most 32)
+							chunkEnd := col + 32
+							if chunkEnd > colEnd {
+								chunkEnd = colEnd
 							}
-							bVal := (float32(n) - 8.0) * scale
-							cRow[j] += aVal * bVal
+							if chunkEnd <= col {
+								break
+							}
+
+							// Dequantize this chunk from Q4 blocks
+							chunkLen := chunkEnd - col
+							for j := 0; j < chunkLen; j++ {
+								absCol := col + j
+								idx := k*N + absCol
+								blockIdx := idx / 32
+								inBlock := idx % 32
+								bo := blockIdx * q4BlockSize
+								scale := f16ToF32(uint16(q4[bo]) | uint16(q4[bo+1])<<8)
+								nib := q4[bo+2+inBlock/2]
+								var n int8
+								if inBlock%2 == 0 {
+									n = int8(nib & 0x0F)
+								} else {
+									n = int8(nib >> 4)
+								}
+								blockBuf[j] = (float32(n) - 8.0) * scale
+							}
+
+							// Now FMA: cRow[col:chunkEnd] += aVal * blockBuf[0:chunkEnd]
+							// Use AVX2 for the FMA part if available
+							if M == 1 && chunkLen >= 8 && TryMatmulAVX2(
+								unsafe.Pointer(&aVal),
+								unsafe.Pointer(&blockBuf[0]),
+								unsafe.Pointer(&cRow[col]),
+								1, chunkLen, 0, chunkLen,
+							) {
+								// AVX2 handled it
+							} else {
+								// Scalar fallback
+								for j := 0; j < chunkLen; j++ {
+									cRow[col+j] += aVal * blockBuf[j]
+								}
+							}
+
+							col = chunkEnd
 						}
 					}
 				}
@@ -175,7 +211,7 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 		return c, nil
 	}
 
-	// Standard path: float32 weights (ikj order, goroutine parallel)
+	// Standard path: float32 weights (ikj order, AVX2 for M=1, goroutine parallel)
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		start := w * colsPerWorker

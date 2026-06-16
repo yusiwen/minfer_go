@@ -16,7 +16,7 @@ func HasAVX2() bool { return cpu.X86.HasAVX2 && cpu.X86.HasFMA }
 func matmulAVX2Kernel(a, b, c unsafe.Pointer, K, N, colStart, colEnd int)
 
 // TryMatmulAVX2 attempts AVX2-accelerated MatMul for one worker's column range.
-// Returns true if the kernel was used, false if the caller should use Go fallback.
+// B is float32 data. Returns true if the kernel was used, false for Go fallback.
 func TryMatmulAVX2(a, b, c unsafe.Pointer, K, N, colStart, colEnd int) bool {
 	if !HasAVX2() {
 		return false
