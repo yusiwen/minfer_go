@@ -116,13 +116,12 @@ type Backend interface {
 	//   ONLY on their relative position (p1 - p2), not absolute positions.
 	//
 	// Parameters:
-	//   q:   Query tensor [seq_len, num_heads, head_dim]
-	//   k:   Key tensor [seq_len, num_heads, head_dim]
+	//   q:   Query tensor [1, num_heads, head_dim]
+	//   k:   Key tensor [1, num_heads, head_dim]
 	//   pos: Current token position (starting from 0)
 	//   dim: head_dim (from model config, e.g. 64 or 128)
-	//
-	// In decode phase, seq_len is always 1 (one token at a time).
-	RoPE(q, k *tensor.Tensor, pos, dim int) error
+	//   base: Frequency base (e.g. 10000.0 for LLaMA, 1000000.0 for Qwen2.5)
+	RoPE(q, k *tensor.Tensor, pos, dim int, base float32) error
 
 	// Silu computes the SiLU (Sigmoid Linear Unit) activation function (in-place).
 	// Also known as Swish (Google, 2017).

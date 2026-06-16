@@ -259,7 +259,7 @@ func (m *Model) attention(x *tensor.Tensor, lw LayerWeights, kv *KVCache, startP
 		kOff := pos * cfg.NumKVHeads * headDim
 		copy(tmpQ.Data, q.Data[qOff:qOff+cfg.NumHeads*headDim])
 		copy(tmpK.Data, k.Data[kOff:kOff+cfg.NumKVHeads*headDim])
-		if err := b.RoPE(tmpQ, tmpK, startPos+pos, headDim); err != nil {
+		if err := b.RoPE(tmpQ, tmpK, startPos+pos, headDim, cfg.RoPEBase); err != nil {
 			return nil, err
 		}
 		copy(q.Data[qOff:qOff+cfg.NumHeads*headDim], tmpQ.Data)
@@ -307,7 +307,7 @@ func (m *Model) attention(x *tensor.Tensor, lw LayerWeights, kv *KVCache, startP
 				for d := 0; d < headDim; d++ {
 					s += q.Data[qBase+d] * kv.K.Data[kBase+d]
 				}
-				s /= float32(headDim)
+				s /= float32(math.Sqrt(float64(headDim))) // scale by sqrt(d_k)
 				scores[ki] = s
 				if first || s > maxScore {
 					maxScore = s

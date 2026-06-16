@@ -273,7 +273,7 @@ func (b *CPUBackend) RMSNorm(t, weight *tensor.Tensor) error {
 //   k:   Key tensor [1, num_heads, head_dim]
 //   pos: Current token position in the sequence
 //   dim: head_dim (from model config, e.g. 64 or 128)
-func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
+func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int, base float32) error {
 
 	// Shape validation: q and k must be 3-D [1, num_heads, dim]
 	if q.Dims() != 3 || k.Dims() != 3 {
@@ -292,9 +292,6 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 		))
 	}
 
-	// TODO: read base from model.Config instead of hardcoding
-	const base = 10000.0
-
 	qHeads := q.Shape[1]
 	kHeads := k.Shape[1]
 	headDim := dim
@@ -303,7 +300,7 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 	for h := 0; h < qHeads; h++ {
 		for i := 0; i < headDim; i += 2 {
 			offset := h*headDim + i
-			freq := 1.0 / math.Pow(base, float64(i)/float64(headDim))
+			freq := 1.0 / math.Pow(float64(base), float64(i)/float64(headDim))
 			cosVal := float32(math.Cos(float64(pos) * freq))
 			sinVal := float32(math.Sin(float64(pos) * freq))
 			q0 := q.Data[offset]
@@ -317,7 +314,7 @@ func (b *CPUBackend) RoPE(q, k *tensor.Tensor, pos, dim int) error {
 	for h := 0; h < kHeads; h++ {
 		for i := 0; i < headDim; i += 2 {
 			offset := h*headDim + i
-			freq := 1.0 / math.Pow(base, float64(i)/float64(headDim))
+			freq := 1.0 / math.Pow(float64(base), float64(i)/float64(headDim))
 			cosVal := float32(math.Cos(float64(pos) * freq))
 			sinVal := float32(math.Sin(float64(pos) * freq))
 			k0 := k.Data[offset]

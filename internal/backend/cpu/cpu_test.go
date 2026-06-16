@@ -177,7 +177,7 @@ func TestRoPE(t *testing.T) {
 	qOrig := q.Clone()
 	kOrig := k.Clone()
 
-	if err := backend.RoPE(q, k, 0, 4); err != nil {
+	if err := backend.RoPE(q, k, 0, 4, 10000.0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,7 +192,7 @@ func TestRoPE(t *testing.T) {
 	}
 
 	// Position 1: cos≠0, sin≠0, result should differ
-	if err := backend.RoPE(q, k, 1, 4); err != nil {
+	if err := backend.RoPE(q, k, 1, 4, 10000.0); err != nil {
 		t.Fatal(err)
 	}
 	same := true
@@ -423,7 +423,7 @@ func TestRoPEPreserveNorm(t *testing.T) {
 
 	qOrig := q.Clone()
 
-	if err := backend.RoPE(q, q, 3, 4); err != nil {
+	if err := backend.RoPE(q, q, 3, 4, 10000.0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -449,7 +449,7 @@ func TestRoPEPanicDims(t *testing.T) {
 	q := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	k := tensor.NewWithData([]float32{1, 2, 3, 4}, 4)
 	expectPanic(t, "cpu.RoPE: q and k must be 3D tensors", func() {
-		backend.RoPE(q, k, 0, 4)
+		backend.RoPE(q, k, 0, 4, 10000.0)
 	})
 }
 
@@ -459,7 +459,7 @@ func TestRoPEPanicDimMismatch(t *testing.T) {
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 2, 2, 2, 2}, 1, 2, 4)
 	k := tensor.NewWithData([]float32{3, 3, 3, 3, 4, 4, 4, 4}, 1, 2, 4)
 	expectPanic(t, "cpu.RoPE: head_dim mismatch", func() {
-		backend.RoPE(q, k, 0, 8) // dim=8 ≠ q.Shape[2]=4
+		backend.RoPE(q, k, 0, 8, 10000.0) // dim=8 ≠ q.Shape[2]=4
 	})
 }
 
@@ -473,7 +473,7 @@ func TestRoPEGQA(t *testing.T) {
 	kOrig := k.Clone()
 
 	// Should NOT panic — GQA is valid
-	if err := backend.RoPE(q, k, 5, 4); err != nil {
+	if err := backend.RoPE(q, k, 5, 4, 10000.0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -509,7 +509,7 @@ func TestRoPEPanicOddDim(t *testing.T) {
 	q := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
 	k := tensor.NewWithData([]float32{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 1, 2, 7)
 	expectPanic(t, "cpu.RoPE: head_dim must be even", func() {
-		backend.RoPE(q, k, 0, 7) // dim=7 is odd
+		backend.RoPE(q, k, 0, 7, 10000.0) // dim=7 is odd
 	})
 }
 
