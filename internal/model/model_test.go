@@ -20,6 +20,10 @@ func (m *mockWeightProvider) ReadTensor(name string) ([]float32, error) {
 	return nil, errMockNotFound
 }
 
+func (m *mockWeightProvider) ReadTensorRaw(name string) ([]byte, uint32, error) {
+	return nil, 0, errMockNotFound
+}
+
 var errMockNotFound = &mockError{"not found"}
 
 type mockError struct{ msg string }
@@ -118,16 +122,18 @@ func TestLoadModel(t *testing.T) {
 	}
 }
 
-// TestLoadModelMissingWeight verifies error on missing required weight.
+// TestLoadModelMissingWeight verifies panic on missing required weight.
 func TestLoadModelMissingWeight(t *testing.T) {
 	cfg := tinyConfig()
 	wp := &mockWeightProvider{weights: map[string][]float32{}}
 	backend := cpu.New()
 
-	_, err := LoadModel(wp, cfg, backend)
-	if err == nil {
-		t.Fatal("expected error for missing embedding weight")
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for missing embedding weight")
+		}
+	}()
+	LoadModel(wp, cfg, backend)
 }
 
 // TestForwardShape verifies the forward pass produces correct output shape.

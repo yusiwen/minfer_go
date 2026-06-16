@@ -34,6 +34,17 @@ import "fmt"
 type Tensor struct {
 	Data  []float32 // Flat data storage
 	Shape []int     // Size of each dimension, e.g. [2, 3] = 2 rows, 3 cols
+
+	// Q4Blocks holds raw Q4_0 quantized block data (optional).
+	// When non-nil, this tensor represents quantized weights rather than
+	// dequantized float32. MatMul detects this and dequantizes on the fly,
+	// reducing memory bandwidth by 4x (Q4_0: 0.5 bytes/weight vs float32:
+	// 4 bytes/weight).
+	//
+	// Layout: sequential Q4_0 blocks in row-major order. Each block holds
+	// 32 values: [f16_scale (2 bytes)] [nibbles (16 bytes)].
+	// Element (row, col) is at block = (row*cols + col) / 32.
+	Q4Blocks []byte
 }
 
 // New creates a new tensor and allocates its memory.

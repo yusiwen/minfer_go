@@ -109,18 +109,78 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 		numWorkers = 1
 	}
 
-	// Parallel: split the N dimension (columns of output) across workers.
-	// Each worker computes C[:, start:end] for its column range.
-	// This is effective even when M=1 (decode step).
 	colsPerWorker := N / numWorkers
 	var wg sync.WaitGroup
 
+	// Fast path: Q4_0 quantized weights (dequantize on read).
+	// Reduces memory bandwidth by ~4x (0.5 bytes/weight vs 4 bytes/weight).
+	if bTensor.Q4Blocks != nil {
+		q4 := bTensor.Q4Blocks
+		const q4BlockSize = 18 // 2 bytes f16 scale + 16 bytes nibbles (32 × 4 bits)
+
+		// Inline f16-to-f32 conversion and Q4_0 dequant.
+		// Must match readQ4_0 in internal/gguf/reader.go exactly.
+		f16ToF32 := func(v uint16) float32 {
+			const magicDiv = float32(1.0 / (1 << 12))
+			sign := uint32(v>>15) & 1
+			exp := uint32(v>>10) & 0x1F
+			mant := uint32(v & 0x3FF)
+			if exp == 0 {
+				return math.Float32frombits((sign << 31) | mant << 13) * magicDiv
+			}
+			if exp == 31 {
+				return math.Float32frombits((sign << 31) | 0x7F800000 | mant << 13)
+			}
+			return math.Float32frombits((sign << 31) | ((exp - 15 + 127) << 23) | mant << 13)
+		}
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			start := w * colsPerWorker
+			end := start + colsPerWorker
+			if w == numWorkers-1 {
+				end = N
+			}
+			go func(colStart, colEnd int) {
+				defer wg.Done()
+				for i := 0; i < M; i++ {
+					cRow := c.Data[i*N:]
+					aRow := a.Data[i*K:]
+					for k := 0; k < K; k++ {
+						aVal := aRow[k]
+						for j := colStart; j < colEnd; j++ {
+							// Dequantize one Q4_0 value
+							idx := k*N + j
+							block := idx / 32
+							inBlock := idx % 32
+							bo := block * q4BlockSize
+							// f16 scale
+							scale := f16ToF32(uint16(q4[bo]) | uint16(q4[bo+1])<<8)
+							// nibble extraction
+							nib := q4[bo+2+inBlock/2]
+							var n int8
+							if inBlock%2 == 0 {
+								n = int8(nib & 0x0F)
+							} else {
+								n = int8(nib >> 4)
+							}
+							bVal := (float32(n) - 8.0) * scale
+							cRow[j] += aVal * bVal
+						}
+					}
+				}
+			}(start, end)
+		}
+		wg.Wait()
+		return c, nil
+	}
+
+	// Standard path: float32 weights (ikj order, goroutine parallel)
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		start := w * colsPerWorker
 		end := start + colsPerWorker
 		if w == numWorkers-1 {
-			end = N // last worker gets the remainder
+			end = N
 		}
 
 		go func(colStart, colEnd int) {
@@ -128,8 +188,6 @@ func (b *CPUBackend) MatMul(a, bTensor *tensor.Tensor) (*tensor.Tensor, error) {
 			for i := 0; i < M; i++ {
 				cRow := c.Data[i*N:]
 				aRow := a.Data[i*K:]
-				// ikj order: A[i][k] stays in register; B[k][j] and C[i][j]
-				// are sequential row accesses — cache-friendly.
 				for k := 0; k < K; k++ {
 					aVal := aRow[k]
 					bRow := bTensor.Data[k*N:]

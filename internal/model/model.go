@@ -80,6 +80,10 @@ type KVCache struct {
 // WeightProvider is the interface for loading tensors from a GGUF file.
 type WeightProvider interface {
 	ReadTensor(name string) ([]float32, error)
+	// ReadTensorRaw reads raw (undequantized) tensor data. Returns the raw
+	// bytes, the storage type, and any error. Used for Q4 MatMul where
+	// dequantization happens on-the-fly to save memory bandwidth.
+	ReadTensorRaw(name string) ([]byte, uint32, error)
 }
 
 // LoadModel loads model weights from a GGUF file and returns a ready-to-use Model.
@@ -92,24 +96,29 @@ func LoadModel(wp WeightProvider, cfg Config, backend compute.Backend) (*Model, 
 	hd := cfg.HiddenDim
 	ffnHd := cfg.FFNHiddenDim
 
-	// Embedding
-	data, err := wp.ReadTensor(embdWeight)
-	if err != nil {
-		return nil, fmt.Errorf("loading embedding: %w", err)
+	// loadWeight reads a weight tensor with optional Q4 block data.
+	loadWeight := func(name string, shape ...int) *tensor.Tensor {
+		data, err := wp.ReadTensor(name)
+		if err != nil {
+			panic(fmt.Sprintf("loading %s: %v", name, err))
+		}
+		t := tensor.NewWithData(data, shape...)
+		if raw, rawType, err := wp.ReadTensorRaw(name); err == nil && rawType == 2 {
+			t.Q4Blocks = raw
+		}
+		return t
 	}
-	m.TokenEmbedding = tensor.NewWithData(data, cfg.VocabSize, hd)
+
+	// Embedding
+	m.TokenEmbedding = loadWeight(embdWeight, cfg.VocabSize, hd)
 
 	// Output norm
-	data, err = wp.ReadTensor(outputNormWeight)
-	if err != nil {
-		return nil, fmt.Errorf("loading output norm: %w", err)
-	}
-	m.OutputNormWeight = tensor.NewWithData(data, hd)
+	m.OutputNormWeight = loadWeight(outputNormWeight, hd)
 
 	// Output weight (LM head)
 	// Stored in GGUF as [vocab_size, hidden_dim], but MatMul needs it
 	// as [hidden_dim, vocab_size] since we compute: logits = hidden × W^T
-	data, err = wp.ReadTensor(outputWeight)
+	data, err := wp.ReadTensor(outputWeight)
 	if err != nil {
 		// Tied embedding: transpose the embedding matrix
 		m.OutputWeight = transposeEmbedding(m.TokenEmbedding, cfg.VocabSize, cfg.HiddenDim)
@@ -117,6 +126,11 @@ func LoadModel(wp WeightProvider, cfg Config, backend compute.Backend) (*Model, 
 		m.OutputWeight = tensor.NewWithData(data, cfg.VocabSize, cfg.HiddenDim)
 		// Transpose to [hidden_dim, vocab_size] for MatMul
 		m.OutputWeight = transposeEmbedding(m.OutputWeight, cfg.VocabSize, cfg.HiddenDim)
+		// Also attach Q4 blocks
+		if raw, rawType, err := wp.ReadTensorRaw(outputWeight); err == nil && rawType == 2 {
+			// Q4 blocks need matching transpose — skip for now, use float32 weights
+			_ = raw
+		}
 	}
 
 	// Per-layer weights
@@ -126,23 +140,15 @@ func LoadModel(wp WeightProvider, cfg Config, backend compute.Backend) (*Model, 
 	for i := 0; i < cfg.NumLayers; i++ {
 		lw := &m.Layers[i]
 
-		read := func(name string, shape ...int) *tensor.Tensor {
-			d, err := wp.ReadTensor(name)
-			if err != nil {
-				panic(fmt.Sprintf("layer %d: %s: %v", i, name, err))
-			}
-			return tensor.NewWithData(d, shape...)
-		}
-
-		lw.AttnNormWeight = read(fmt.Sprintf(attnNormFmt, i), hd)
-		lw.AttnQWeight = read(fmt.Sprintf(attnQWeightFmt, i), hd, hd)
-		lw.AttnKWeight = read(fmt.Sprintf(attnKWeightFmt, i), hd, cfg.NumKVHeads*cfg.HeadDim)
-		lw.AttnVWeight = read(fmt.Sprintf(attnVWeightFmt, i), hd, cfg.NumKVHeads*cfg.HeadDim)
-		lw.AttnOutWeight = read(fmt.Sprintf(attnOutWeightFmt, i), hd, hd)
-		lw.FfnNormWeight = read(fmt.Sprintf(ffnNormFmt, i), hd)
-		lw.FfnGateWeight = read(fmt.Sprintf(ffnGateWeightFmt, i), hd, ffnHd)
-		lw.FfnUpWeight = read(fmt.Sprintf(ffnUpWeightFmt, i), hd, ffnHd)
-		lw.FfnDownWeight = read(fmt.Sprintf(ffnDownWeightFmt, i), ffnHd, hd)
+		lw.AttnNormWeight = loadWeight(fmt.Sprintf(attnNormFmt, i), hd)
+		lw.AttnQWeight = loadWeight(fmt.Sprintf(attnQWeightFmt, i), hd, hd)
+		lw.AttnKWeight = loadWeight(fmt.Sprintf(attnKWeightFmt, i), hd, cfg.NumKVHeads*cfg.HeadDim)
+		lw.AttnVWeight = loadWeight(fmt.Sprintf(attnVWeightFmt, i), hd, cfg.NumKVHeads*cfg.HeadDim)
+		lw.AttnOutWeight = loadWeight(fmt.Sprintf(attnOutWeightFmt, i), hd, hd)
+		lw.FfnNormWeight = loadWeight(fmt.Sprintf(ffnNormFmt, i), hd)
+		lw.FfnGateWeight = loadWeight(fmt.Sprintf(ffnGateWeightFmt, i), hd, ffnHd)
+		lw.FfnUpWeight = loadWeight(fmt.Sprintf(ffnUpWeightFmt, i), hd, ffnHd)
+		lw.FfnDownWeight = loadWeight(fmt.Sprintf(ffnDownWeightFmt, i), ffnHd, hd)
 
 		m.KVCaches[i] = KVCache{
 			K: tensor.New(0, cfg.NumKVHeads, cfg.HeadDim),

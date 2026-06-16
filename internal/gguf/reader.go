@@ -396,57 +396,89 @@ func (r *Reader) readTensorInfo() (TensorInfo, error) {
 }
 
 // ReadTensor reads and dequantizes a tensor's weight data by name.
-// Returns a float32 Tensor ready for use with Minfer's compute backends.
+// ReadTensor reads a tensor by name and dequantizes it to float32.
 func (r *Reader) ReadTensor(name string) ([]float32, error) {
-	// Find the tensor info
-	var info *TensorInfo
-	for i := range r.TensorInfos {
-		if r.TensorInfos[i].Name == name {
-			info = &r.TensorInfos[i]
-			break
-		}
-	}
-	if info == nil {
+	ti, ok := r.findTensor(name)
+	if !ok {
 		return nil, fmt.Errorf("gguf: tensor %q not found", name)
 	}
+	return r.readTensorData(ti)
+}
 
-	// Calculate number of elements from dimensions
+// ReadTensorRaw reads a tensor's raw block data (undequantized).
+// Returns the raw bytes and the storage type. For Q4_0/Q8_0 tensors,
+// this lets the caller handle dequantization inside MatMul.
+func (r *Reader) ReadTensorRaw(name string) ([]byte, uint32, error) {
+	ti, ok := r.findTensor(name)
+	if !ok {
+		return nil, 0, fmt.Errorf("gguf: tensor %q not found", name)
+	}
+
+	elemCount := 1
+	for _, d := range ti.Dimensions {
+		elemCount *= int(d)
+	}
+	blockSize := ti.Type.BlockSize()
+	blockCount := (elemCount + blockSize - 1) / blockSize
+
+	raw := make([]byte, blockCount*ti.Type.TypeSize())
+
+	// Seek to tensor data offset (relative to data section start)
+	_, err := r.r.Seek(int64(r.DataOffset+ti.Offset), io.SeekStart)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gguf: seeking to tensor %q: %w", name, err)
+	}
+
+	if _, err := io.ReadFull(r.r, raw); err != nil {
+		return nil, 0, fmt.Errorf("gguf: reading raw tensor %q: %w", name, err)
+	}
+
+	return raw, uint32(ti.Type), nil
+}
+
+// findTensor looks up a tensor by name in the tensor index.
+func (r *Reader) findTensor(name string) (TensorInfo, bool) {
+	for _, ti := range r.TensorInfos {
+		if ti.Name == name {
+			return ti, true
+		}
+	}
+	return TensorInfo{}, false
+}
+
+// readTensorData reads and dequantizes a tensor's weight data.
+func (r *Reader) readTensorData(ti TensorInfo) ([]float32, error) {
 	nElements := uint64(1)
-	for _, d := range info.Dimensions {
+	for _, d := range ti.Dimensions {
 		nElements *= d
 	}
 
-	// Allocate output
 	result := make([]float32, nElements)
-
-	// Seek to the tensor's data
-	dataPos := int64(r.DataOffset + info.Offset)
+	dataPos := int64(r.DataOffset + ti.Offset)
 	if _, err := r.r.Seek(dataPos, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("gguf: seeking to tensor %q data: %w", name, err)
+		return nil, fmt.Errorf("gguf: seeking to tensor %q data: %w", ti.Name, err)
 	}
 
-	// Read and dequantize
-	switch info.Type {
+	switch ti.Type {
 	case TypeF32:
 		if err := binary.Read(r.r, binary.LittleEndian, result); err != nil {
-			return nil, fmt.Errorf("gguf: reading F32 tensor %q: %w", name, err)
+			return nil, fmt.Errorf("gguf: reading F32 tensor %q: %w", ti.Name, err)
 		}
 	case TypeF16:
 		if err := r.readF16(result); err != nil {
-			return nil, fmt.Errorf("gguf: reading F16 tensor %q: %w", name, err)
+			return nil, fmt.Errorf("gguf: reading F16 tensor %q: %w", ti.Name, err)
 		}
 	case TypeQ4_0:
 		if err := r.readQ4_0(result); err != nil {
-			return nil, fmt.Errorf("gguf: reading Q4_0 tensor %q: %w", name, err)
+			return nil, fmt.Errorf("gguf: reading Q4_0 tensor %q: %w", ti.Name, err)
 		}
 	case TypeQ8_0:
 		if err := r.readQ8_0(result); err != nil {
-			return nil, fmt.Errorf("gguf: reading Q8_0 tensor %q: %w", name, err)
+			return nil, fmt.Errorf("gguf: reading Q8_0 tensor %q: %w", ti.Name, err)
 		}
 	default:
-		return nil, fmt.Errorf("gguf: unsupported tensor type %s for %q", info.Type, name)
+		return nil, fmt.Errorf("gguf: unsupported tensor type %s for %q", ti.Type, ti.Name)
 	}
-
 	return result, nil
 }
 
